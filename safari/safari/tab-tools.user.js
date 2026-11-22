@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tab Tools (iOS)
 // @namespace    tab-tools-ios
-// @version      1.0.0
+// @version      2.0.0
 // @description  Rozwiązuje pytanie z zaznaczenia, tekstu strony albo ze zdjęcia. Gemini, OpenRouter albo Groq.
 // @match        *://*/*
 // @grant        GM.xmlHttpRequest
@@ -728,11 +728,53 @@
 
   /* ---------- strona i obraz ---------- */
 
-  function selectionText() {
+  /* Safari na iOS odznacza tekst, gdy dotknie się czegokolwiek poza stroną.
+     Dlatego zaznaczenie jest zapamiętywane od razu przy jego powstaniu. */
+
+  const SEL_KEEP_MS = 2 * 60 * 1000;
+  let keptSelection = { text: '', at: 0 };
+
+  function liveSelection() {
+    let text = '';
     try {
-      const sel = window.getSelection ? String(window.getSelection().toString()) : '';
-      return sel.trim();
-    } catch (err) { return ''; }
+      text = String(window.getSelection ? window.getSelection().toString() : '');
+    } catch (err) { text = ''; }
+    if (!text.trim()) {
+      const field = document.activeElement;
+      if (field && typeof field.selectionStart === 'number' && typeof field.selectionEnd === 'number'
+        && field.selectionEnd > field.selectionStart) {
+        try {
+          text = String(field.value || '').slice(field.selectionStart, field.selectionEnd);
+        } catch (err) { text = ''; }
+      }
+    }
+    return text.replace(/\s+/g, ' ').trim();
+  }
+
+  function keepSelection() {
+    const text = liveSelection();
+    if (text) keptSelection = { text: text, at: Date.now() };
+    return keptSelection;
+  }
+
+  function keptText() {
+    if (!keptSelection.text) return '';
+    if (Date.now() - keptSelection.at > SEL_KEEP_MS) { keptSelection = { text: '', at: 0 }; return ''; }
+    return keptSelection.text;
+  }
+
+  function currentSelection() {
+    const live = liveSelection();
+    if (live) { keptSelection = { text: live, at: Date.now() }; return { text: live, live: true }; }
+    return { text: keptText(), live: false };
+  }
+
+  function clearSelection() {
+    keptSelection = { text: '', at: 0 };
+    try {
+      const sel = window.getSelection ? window.getSelection() : null;
+      if (sel && sel.rangeCount) sel.removeAllRanges();
+    } catch (err) { /* czyścimy tylko pamięć */ }
   }
 
   function pageText() {
@@ -781,44 +823,68 @@
 
   const CSS = [
     ':host{all:initial}',
-    '*{box-sizing:border-box}',
-    '.fab{position:fixed;right:12px;bottom:calc(18px + env(safe-area-inset-bottom));width:52px;height:52px;border-radius:26px;border:0;',
-    'background:#2a5cff;color:#fff;font:600 14px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.5px;',
-    'box-shadow:0 6px 22px rgba(0,0,0,.35);z-index:2147483001;touch-action:manipulation}',
+    '*,*::before,*::after{box-sizing:border-box}',
+    '.fab{position:fixed;right:14px;bottom:calc(18px + env(safe-area-inset-bottom));width:40px;height:40px;border-radius:20px;',
+    'border:1px solid rgba(20,24,40,.10);background:rgba(255,255,255,.58);color:rgba(28,28,30,.55);',
+    '-webkit-backdrop-filter:blur(10px) saturate(1.6);backdrop-filter:blur(10px) saturate(1.6);',
+    'font:600 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.4px;',
+    '-webkit-text-size-adjust:100%;text-size-adjust:100%;',
+    'box-shadow:0 2px 10px rgba(16,20,32,.12);z-index:2147483001;touch-action:manipulation;',
+    'opacity:.4;transition:opacity .25s ease,box-shadow .2s ease,background .2s ease,transform .15s ease}',
+    '.fab.live,.fab.armed,.fab:active,.fab:focus-visible{opacity:1}',
+    '.fab.armed{box-shadow:0 2px 10px rgba(16,20,32,.12),0 0 0 2px rgba(59,91,219,.28)}',
+    '.fab:active{transform:scale(.94);background:rgba(255,255,255,.85)}',
     '.fab[hidden]{display:none}',
-    '.panel{position:fixed;left:8px;right:8px;bottom:calc(82px + env(safe-area-inset-bottom));max-height:72vh;overflow:auto;',
-    'background:#15171c;color:#e8eaee;border:1px solid #2a2e37;border-radius:14px;padding:10px 12px 14px;',
-    'font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 10px 34px rgba(0,0,0,.5);z-index:2147483000}',
+    '.panel{position:fixed;left:50%;bottom:calc(66px + env(safe-area-inset-bottom));transform:translateX(-50%);',
+    'width:calc(100% - 16px);max-width:460px;max-height:70vh;overflow:auto;',
+    'background:rgba(252,252,253,.84);color:#1c1c1e;border:1px solid rgba(20,24,40,.07);border-radius:16px;',
+    'padding:10px 12px 12px;',
+    'font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;',
+    '-webkit-backdrop-filter:blur(20px) saturate(1.8);backdrop-filter:blur(20px) saturate(1.8);',
+    '-webkit-text-size-adjust:100%;text-size-adjust:100%;',
+    'box-shadow:0 8px 28px rgba(16,20,32,.16);z-index:2147483000}',
     '.panel[hidden]{display:none}',
-    '.bar{display:flex;align-items:center;gap:8px;margin-bottom:10px}',
-    '.title{font-weight:600}',
-    '.status{flex:1;min-width:0;font-size:12px;color:#9aa3b2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-    '.status.bad{color:#ff9a9a}',
-    '.close{width:32px;height:32px;border:0;border-radius:8px;background:#23262e;color:#cfd4dd;font-size:20px;line-height:1}',
-    '.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}',
-    '.actions button{min-height:40px;border:1px solid #2f3542;border-radius:10px;background:#1d2027;color:#e8eaee;font:500 13px/1.2 inherit;padding:8px}',
-    '.actions button:disabled{opacity:.5}',
+    '.bar{display:flex;align-items:center;gap:8px;margin-bottom:8px}',
+    '.title{font-weight:600;font-size:13px;color:#3a3f4b}',
+    '.status{flex:1;min-width:0;font-size:11px;color:#8a8f9a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.status.bad{color:#c0392b}',
+    '.close{width:28px;height:28px;border:0;border-radius:8px;background:transparent;color:#8a8f9a;font-size:18px;line-height:1}',
+    '.sel{display:flex;align-items:center;gap:6px;margin:0 0 8px;padding:6px 8px;border-radius:10px;',
+    'background:rgba(59,91,219,.08);color:#45506b;font-size:12px;line-height:1.35}',
+    '.sel[hidden]{display:none}',
+    '.seltext{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.seldrop{flex:0 0 auto;border:0;border-radius:6px;background:transparent;color:#8a8f9a;',
+    'font-family:inherit;font-size:15px;font-weight:400;line-height:1;padding:2px 5px}',
+    '.seldrop:active{background:rgba(20,24,40,.08)}',
+    '.actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px}',
+    '.actions button{min-height:38px;border:1px solid rgba(20,24,40,.08);border-radius:10px;',
+    'background:rgba(20,24,40,.035);color:#2b3040;font-family:inherit;font-size:13px;font-weight:500;line-height:1.2;padding:6px}',
+    '.actions button:active{background:rgba(20,24,40,.075)}',
+    '.actions button:disabled{opacity:.45}',
     '.answer:empty{display:none}',
     '.q{margin:0 0 8px;font-weight:600}',
     '.open{margin:0 0 8px;white-space:pre-wrap}',
     '.row{display:flex;gap:8px;align-items:flex-start;margin-bottom:6px}',
-    '.badge{flex:0 0 auto;width:22px;height:22px;border-radius:6px;background:#2a5cff;color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center}',
+    '.badge{flex:0 0 auto;min-width:22px;height:22px;border-radius:7px;background:rgba(59,91,219,.12);color:#33499c;',
+    'font-size:12px;display:flex;align-items:center;justify-content:center;padding:0 4px}',
     '.txt{flex:1;min-width:0}',
     '.pair{display:flex;gap:8px;margin-bottom:6px}',
-    '.pair span:first-child{flex:1;min-width:0;color:#cfd4dd}',
+    '.pair span:first-child{flex:1;min-width:0;color:#5b6270}',
     '.pair span:last-child{flex:1;min-width:0}',
-    '.notes{margin:8px 0 0;font-size:12px;color:#9aa3b2}',
-    '.conf{margin:8px 0 0;font-size:12px;color:#9aa3b2}',
-    '.warn{margin:6px 0 0;font-size:12px;color:#ffce7a}',
-    '.err{margin:0;color:#ff9a9a}',
-    '.settings{border-top:1px solid #2a2e37;padding-top:10px;margin-top:4px}',
+    '.notes{margin:8px 0 0;font-size:12px;color:#8a8f9a}',
+    '.conf{margin:8px 0 0;font-size:11px;color:#9aa0ab}',
+    '.warn{margin:6px 0 0;font-size:12px;color:#a86b00}',
+    '.err{margin:0;color:#c0392b}',
+    '.settings{border-top:1px solid rgba(20,24,40,.08);padding-top:10px;margin-top:4px}',
     '.settings[hidden]{display:none}',
-    '.settings label{display:block;margin-bottom:8px;font-size:12px;color:#9aa3b2}',
-    '.settings input,.settings select{display:block;width:100%;margin-top:4px;min-height:38px;border:1px solid #2f3542;border-radius:9px;',
-    'background:#1d2027;color:#e8eaee;font:14px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:8px}',
+    '.settings label{display:block;margin-bottom:8px;font-size:12px;color:#8a8f9a}',
+    '.settings input,.settings select{display:block;width:100%;margin-top:4px;min-height:36px;',
+    'border:1px solid rgba(20,24,40,.12);border-radius:9px;background:rgba(255,255,255,.72);color:#1c1c1e;',
+    'font:13px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:7px 8px}',
     '.settings .row{margin-top:10px;align-items:center}',
-    '.save{min-height:38px;padding:0 16px;border:0;border-radius:9px;background:#2a5cff;color:#fff;font:500 13px/1 inherit}',
-    '.hint{font-size:12px;color:#9aa3b2}'
+    '.save{min-height:36px;padding:0 14px;border:0;border-radius:9px;background:rgba(59,91,219,.9);color:#fff;',
+    'font-family:inherit;font-size:13px;font-weight:500;line-height:1}',
+    '.hint{font-size:11px;color:#9aa0ab}'
   ].join('');
 
   function el(tag, cls, text) {
@@ -858,6 +924,15 @@
     bar.appendChild(title);
     bar.appendChild(status);
     bar.appendChild(close);
+
+    const selChip = el('div', 'sel');
+    selChip.hidden = true;
+    const selText = el('span', 'seltext');
+    const selDrop = el('button', 'seldrop', '×');
+    selDrop.type = 'button';
+    selDrop.setAttribute('aria-label', 'Wyczyść zapamiętane zaznaczenie');
+    selChip.appendChild(selText);
+    selChip.appendChild(selDrop);
 
     const actions = el('div', 'actions');
     const buttons = {};
@@ -917,6 +992,7 @@
     file.hidden = true;
 
     panel.appendChild(bar);
+    panel.appendChild(selChip);
     panel.appendChild(actions);
     panel.appendChild(answer);
     panel.appendChild(panelSettings);
@@ -927,19 +1003,22 @@
     (document.body || document.documentElement).appendChild(host);
 
     ui = {
-      fab: fab, panel: panel, status: status, answer: answer,
-      buttons: buttons, settings: panelSettings, provider: provider,
-      key: key, model: model, hint: hint, file: file
+      host: host, fab: fab, panel: panel, status: status, answer: answer,
+      buttons: buttons, settings: panelSettings, chip: selChip, chipText: selText,
+      provider: provider, key: key, model: model, hint: hint, file: file
     };
 
     fab.addEventListener('click', () => {
-      panel.hidden = !panel.hidden;
-      if (panel.hidden) panelSettings.hidden = true;
+      if (panel.hidden) openPanel();
+      else closePanel();
     });
 
-    close.addEventListener('click', () => {
-      panel.hidden = true;
-      panelSettings.hidden = true;
+    close.addEventListener('click', () => closePanel());
+
+    selDrop.addEventListener('click', () => {
+      clearSelection();
+      refreshSelChip();
+      updateArmed();
     });
 
     provider.addEventListener('change', fillKeyFields);
@@ -955,12 +1034,13 @@
     });
 
     buttons.selection.addEventListener('click', () => {
-      const text = selectionText();
-      if (!text) {
-        say('Najpierw zaznacz tekst na stronie', true);
+      const picked = currentSelection();
+      if (!picked.text) {
+        say('Zaznacz tekst na stronie, potem stuknij TT', true);
         return;
       }
-      solveText(text);
+      refreshSelChip();
+      solveText(picked.text, picked.live ? '' : 'zapamiętane zaznaczenie (' + picked.text.length + ' znaków)');
     });
 
     buttons.page.addEventListener('click', () => {
@@ -969,7 +1049,7 @@
         say('Nie widzę tekstu na tej stronie', true);
         return;
       }
-      solveText(text);
+      solveText(text, 'tekst strony');
     });
 
     buttons.image.addEventListener('click', () => {
@@ -1004,6 +1084,54 @@
     if (!ui) return;
     ui.status.textContent = text || '';
     ui.status.className = bad ? 'status bad' : 'status';
+  }
+
+  function openPanel() {
+    if (!ui) return;
+    refreshSelChip();
+    ui.panel.hidden = false;
+    ui.fab.classList.add('live');
+  }
+
+  function closePanel() {
+    if (!ui) return;
+    ui.panel.hidden = true;
+    ui.settings.hidden = true;
+    ui.fab.classList.remove('live');
+  }
+
+  function refreshSelChip() {
+    if (!ui) return;
+    const picked = currentSelection();
+    if (!picked.text) {
+      ui.chip.hidden = true;
+      ui.chipText.textContent = '';
+      return;
+    }
+    const preview = picked.text.length > 56 ? picked.text.slice(0, 56) + '…' : picked.text;
+    ui.chip.hidden = false;
+    ui.chipText.textContent = preview + ' · ' + picked.text.length + ' znaków';
+  }
+
+  let armTimer = 0;
+
+  function updateArmed() {
+    if (!ui) return;
+    const has = Boolean(keptText() || liveSelection());
+    ui.fab.classList.toggle('armed', has);
+    if (armTimer) clearTimeout(armTimer);
+    armTimer = has ? setTimeout(updateArmed, SEL_KEEP_MS + 1000) : 0;
+  }
+
+  function onSelectionChange() {
+    keepSelection();
+    if (ui && !ui.panel.hidden) refreshSelChip();
+    updateArmed();
+  }
+
+  function onDocumentPointerDown(event) {
+    if (!ui || ui.panel.hidden) return;
+    if (event.target !== ui.host && !ui.host.contains(event.target)) closePanel();
   }
 
   function setBusy(value) {
@@ -1045,7 +1173,7 @@
     }
   }
 
-  async function solveText(text) {
+  async function solveText(text, label) {
     if (busy) return;
     const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, PAGE_TEXT_LIMIT);
     if (!clean) {
@@ -1054,7 +1182,7 @@
     }
 
     setBusy(true);
-    say('Analizuję…');
+    say(label ? 'Analizuję ' + label + '…' : 'Analizuję…');
     renderAnswer(null);
 
     try {
@@ -1102,6 +1230,9 @@
 
   function start() {
     mount();
+    document.addEventListener('selectionchange', onSelectionChange, true);
+    document.addEventListener('pointerdown', onDocumentPointerDown, true);
+    updateArmed();
     getSettings().then(() => { if (ui) fillKeyFields(); }).catch(() => {});
   }
 

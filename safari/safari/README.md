@@ -1,8 +1,13 @@
 # Tab Tools na iPhone (userscript)
 
 Wersja rozszerzenia dla Safari na iOS. Działa jako userscript w aplikacji
-**Userscripts** i daje przycisk **TT** w rogu strony: zaznaczenie, tekst strony
-albo zdjęcie zadania, jedno pytanie do modelu i odpowiedź w panelu.
+**Userscripts** i daje mały, półprzezroczysty przycisk **TT** w rogu strony:
+zaznaczenie, tekst strony albo zdjęcie zadania, jedno pytanie do modelu i
+odpowiedź w jasnym panelu.
+
+Wybrany fragment nie przepada po stuknięciu w przycisk. Skrypt zapamiętuje go
+w chwili zaznaczania, więc panel można otworzyć dopiero po nim, a tekst nadal
+zostanie wysłany.
 
 ## Instalacja z GitHuba
 
@@ -39,10 +44,20 @@ zainstaluj nowszą wersję (Userscripts podmieni skrypt).
 
 ## Jak używać
 
-- **Zaznaczenie** — najpierw zaznacz tekst pytania na stronie, potem stuknij.
+- **Zaznaczenie** — zaznacz tekst pytania, potem stuknij **TT**. Jeśli iOS
+  odznaczy tekst przy pierwszym stuknięciu (tak potrafi zrobić), stuknij
+  **TT** drugi raz: wybrane fragmenty są już zapamiętane. Skrót zaznaczenia i
+  jego długość widać w panelu nad przyciskami (np. „Pytanie 4 ... · 182
+  znaków”), a krzyżyk obok niego czyści pamięć i zaznaczenie na stronie.
+  Pamiętane zaznaczenie trzyma się 2 minuty.
 - **Tekst strony** — wysyła tekst widoczny na stronie (do 12000 znaków).
 - **Zdjęcie** — wybierz zdjęcie z biblioteki albo zrób nowe; do promptu
   doklejany jest też tekst strony, żeby model lepiej odczytał treść.
+
+Panel jest jasny i półprzezroczysty, a przycisk **TT** jest mały i przygaszony,
+żeby nie zasłaniał strony. Rozjaśnia się, gdy otworzysz panel albo gdy jest
+zapamiętane zaznaczenie gotowe do wysłania (delikatna niebieska obwódka).
+Puknięcie poza panelem zamyka go.
 
 Odpowiedź pojawia się w panelu pod przyciskami. Przy pewności poniżej 40%
 panel dopisuje ostrzeżenie.
@@ -53,6 +68,9 @@ panel dopisuje ostrzeżenie.
   automatycznego zrzutu jest zdjęcie z biblioteki lub aparatu.
 - Nie ma skrótów klawiszowych ani automatycznego wyłapywania pytań: wszystko
   uruchamia się stuknięciem w **TT**.
+- Dotknięcie czegokolwiek poza stroną odznacza tekst w Safari, dlatego
+  zaznaczenie jest przechwytywane przy `selectionchange` i trzymane w pamięci
+  przez 2 minuty. Dzięki temu kolejność „zaznacz, potem otwórz panel” działa.
 - Skrypt czyta tylko tekst strony głównej. Treść w obcych iframe'ach
   (np. osadzone testy) może być niewidoczna — wtedy użyj zdjęcia.
 - Klucze są trzymane w magazynie userscriptu (`GM.setValue`), a gdy go nie ma,
@@ -68,6 +86,10 @@ panel dopisuje ostrzeżenie.
   chwilę albo przełącz providera.
 - **Model nie zwrócił treści**: model nie odczytał pytania. Spróbuj ze
   zdjęciem wyraźniejszym, krótszym zaznaczeniem albo innym providerem.
+- **Pierwsze stuknięcie tylko odznacza tekst**: tak działa iOS przy aktywnym
+  zaznaczeniu. Stuknij **TT** ponownie, zaznaczenie jest już zapamiętane.
+- **Przycisk TT nie przeszkadza**: jest przygaszony, dopóki nie jest potrzebny.
+  Gdy panel jest otwarty, zamyka go stuknięcie w dowolne miejsce strony.
 
 ## Uwaga o kluczach
 
