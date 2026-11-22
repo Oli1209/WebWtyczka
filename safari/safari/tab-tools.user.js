@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tab Tools (iOS)
 // @namespace    tab-tools-ios
-// @version      2.0.0
+// @version      2.0.1
 // @description  Rozwiązuje pytanie z zaznaczenia, tekstu strony albo ze zdjęcia. Gemini, OpenRouter albo Groq.
 // @match        *://*/*
 // @grant        GM.xmlHttpRequest
@@ -820,7 +820,7 @@
   /* ---------- panel ---------- */
 
   const HOST_ID = 'tt-ios-host';
-  const VERSION = '2.0.0'; // trzymaj zgodne z @version wyżej
+  const VERSION = '2.0.1'; // trzymaj zgodne z @version wyżej
 
   const CSS = [
     ':host{all:initial}',

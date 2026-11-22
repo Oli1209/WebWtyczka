@@ -41,7 +41,7 @@ zostanie wysłany.
 
 Aktualizacja: po zmianie pliku na GitHubie otwórz ten sam link raw i
 zainstaluj nowszą wersję (Userscripts podmieni skrypt). Numer wersji widać
-w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.0.0`).
+w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.0.1`).
 
 ## Jak używać
 
