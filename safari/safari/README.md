@@ -41,7 +41,7 @@ zostanie wysłany.
 
 Aktualizacja: po zmianie pliku na GitHubie otwórz ten sam link raw i
 zainstaluj nowszą wersję (Userscripts podmieni skrypt). Numer wersji widać
-w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.0.2`).
+w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.1.0`).
 
 ## Jak używać
 
@@ -58,12 +58,23 @@ w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.0.2`).
   opóźnieniem, żeby odróżnić je od dwukrotnego.
 - **Tekst strony** — wysyła tekst widoczny na stronie (do 12000 znaków).
 - **Zdjęcie** — wybierz zdjęcie z biblioteki albo zrób nowe; do promptu
-  doklejany jest też tekst strony, żeby model lepiej odczytał treść.
+doklejany jest też tekst strony, żeby model lepiej odczytał treść.
+- **Motyw** — w nagłówku panelu, obok krzyżyka, jest księżyc/słońce:
+jedno stuknięcie przełącza panel i przycisk na jasny albo ciemny. Wybór
+zostaje zapamiętany. Bez zapisanego wyboru skrypt bierze motyw systemowy.
+- **Przesuwanie przycisku** — przytrzymaj **TT** około 0,4 s, aż kółko się
+powiększy i dostanie niebieską obwódkę, potem przeciągnij je w dowolne
+miejsce ekranu. Pozycja zapisuje się i wraca po odświeżeniu strony oraz po
+obrocie telefonu (zawsze w granicach ekranu).
 
 Panel jest jasny i półprzezroczysty, a przycisk **TT** jest mały i przygaszony,
 żeby nie zasłaniał strony. Rozjaśnia się, gdy otworzysz panel albo gdy jest
 zapamiętane zaznaczenie gotowe do wysłania (delikatna niebieska obwódka).
 Puknięcie poza panelem zamyka go.
+
+Dymek szybkiej odpowiedzi trzyma się przy przycisku, więc po przeciągnięciu
+**TT** w inne miejsce nadal pojawia się obok niego i nie wychodzi za ekran.
+W trybie ciemnym dymek jest jasny, żeby odpowiedź była czytelna.
 
 Odpowiedź pojawia się w panelu pod przyciskami. Przy pewności poniżej 40%
 panel dopisuje ostrzeżenie.
@@ -77,10 +88,14 @@ panel dopisuje ostrzeżenie.
 - Dotknięcie czegokolwiek poza stroną odznacza tekst w Safari, dlatego
   zaznaczenie jest przechwytywane przy `selectionchange` i trzymane w pamięci
   przez 2 minuty. Dzięki temu kolejność „zaznacz, potem otwórz panel” działa.
+- Przycisk ma `touch-action:none`, żeby przytrzymanie i przeciąganie działało
+  pewnie. Przesunięcie palcem rozpoczęte na samym kółku nie przewija strony —
+  do przewijania użyj resztę ekranu.
 - Skrypt czyta tylko tekst strony głównej. Treść w obcych iframe'ach
   (np. osadzone testy) może być niewidoczna — wtedy użyj zdjęcia.
 - Klucze są trzymane w magazynie userscriptu (`GM.setValue`), a gdy go nie ma,
-  w `localStorage`. Nie trafiają do kodu strony.
+  w `localStorage`. Nie trafiają do kodu strony. Motyw i pozycja przycisku leżą
+  w osobnym wpisie (`tt_ios_ui`), razem z kluczami tylko w tym samym magazynie.
 
 ## Gdy coś nie działa
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tab Tools (iOS)
 // @namespace    tab-tools-ios
-// @version      2.0.2
+// @version      2.1.0
 // @description  Rozwiązuje pytanie z zaznaczenia, tekstu strony albo ze zdjęcia. Gemini, OpenRouter albo Groq.
 // @match        *://*/*
 // @grant        GM.xmlHttpRequest
@@ -69,6 +69,31 @@
     };
     settings = next;
     await storeSet(STORE, next);
+  }
+
+  /* motyw i położenie przycisku trzymamy osobno od kluczy API */
+
+  const UI_STORE = 'tt_ios_ui';
+  let uiState = { theme: '', fab: null };
+
+  async function loadUiState() {
+    const saved = await storeGet(UI_STORE);
+    const raw = saved && typeof saved === 'object' ? saved : {};
+    const systemDark = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const fab = raw.fab && typeof raw.fab.x === 'number' && typeof raw.fab.y === 'number'
+      ? { x: Math.min(1, Math.max(0, raw.fab.x)), y: Math.min(1, Math.max(0, raw.fab.y)) }
+      : null;
+    uiState = {
+      theme: raw.theme === 'dark' || raw.theme === 'light' ? raw.theme : (systemDark ? 'dark' : 'light'),
+      fab: fab
+    };
+    return uiState;
+  }
+
+  async function saveUiState(patch) {
+    Object.assign(uiState, patch || {});
+    await storeSet(UI_STORE, { theme: uiState.theme, fab: uiState.fab });
   }
 
   /* ---------- stałe ---------- */
@@ -820,7 +845,7 @@
   /* ---------- panel ---------- */
 
   const HOST_ID = 'tt-ios-host';
-  const VERSION = '2.0.2'; // trzymaj zgodne z @version wyżej
+  const VERSION = '2.1.0'; // trzymaj zgodne z @version wyżej
 
   const CSS = [
     ':host{all:initial}',
@@ -830,12 +855,15 @@
     '-webkit-backdrop-filter:blur(10px) saturate(1.6);backdrop-filter:blur(10px) saturate(1.6);',
     'font:600 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.4px;',
     '-webkit-text-size-adjust:100%;text-size-adjust:100%;',
-    'box-shadow:0 2px 10px rgba(16,20,32,.12);z-index:2147483001;touch-action:manipulation;',
+    'box-shadow:0 2px 10px rgba(16,20,32,.12);z-index:2147483001;touch-action:none;',
+    '-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;',
     'opacity:.4;transition:opacity .25s ease,box-shadow .2s ease,background .2s ease,transform .15s ease}',
     '.fab.live,.fab.armed,.fab:active,.fab:focus-visible{opacity:1}',
     '.fab.armed{box-shadow:0 2px 10px rgba(16,20,32,.12),0 0 0 2px rgba(59,91,219,.28)}',
     '.fab:active{transform:scale(.94);background:rgba(255,255,255,.85)}',
     '.fab[hidden]{display:none}',
+    '.fab.dragging{opacity:1;transform:scale(1.06);transition:none;',
+    'box-shadow:0 8px 22px rgba(16,20,32,.28),0 0 0 2px rgba(59,91,219,.35)}',
     '.panel{position:fixed;left:50%;bottom:calc(66px + env(safe-area-inset-bottom));transform:translateX(-50%);',
     'width:calc(100% - 16px);max-width:460px;max-height:70vh;overflow:auto;',
     'background:rgba(252,252,253,.84);color:#1c1c1e;border:1px solid rgba(20,24,40,.07);border-radius:16px;',
@@ -843,7 +871,7 @@
     'font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;',
     '-webkit-backdrop-filter:blur(20px) saturate(1.8);backdrop-filter:blur(20px) saturate(1.8);',
     '-webkit-text-size-adjust:100%;text-size-adjust:100%;',
-    'box-shadow:0 8px 28px rgba(16,20,32,.16);z-index:2147483000}',
+    'box-shadow:0 8px 28px rgba(16,20,32,.16);z-index:2147483000;color-scheme:light}',
     '.panel[hidden]{display:none}',
     '.bar{display:flex;align-items:center;gap:8px;margin-bottom:8px}',
     '.title{font-weight:600;font-size:13px;color:#3a3f4b}',
@@ -851,6 +879,9 @@
     '.status{flex:1;min-width:0;font-size:11px;color:#8a8f9a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.status.bad{color:#c0392b}',
     '.close{width:28px;height:28px;border:0;border-radius:8px;background:transparent;color:#8a8f9a;font-size:18px;line-height:1}',
+    '.theme{width:28px;height:28px;border:0;border-radius:8px;background:transparent;color:#8a8f9a;',
+    'font-family:inherit;font-size:15px;line-height:1;padding:0}',
+    '.theme:active{background:rgba(20,24,40,.08)}',
     '.sel{display:flex;align-items:center;gap:6px;margin:0 0 8px;padding:6px 8px;border-radius:10px;',
     'background:rgba(59,91,219,.08);color:#45506b;font-size:12px;line-height:1.35}',
     '.sel[hidden]{display:none}',
@@ -895,7 +926,36 @@
     'box-shadow:0 6px 20px rgba(16,20,32,.24);z-index:2147483002;pointer-events:none;',
     'opacity:0;transform:translateY(4px);transition:opacity .15s ease,transform .15s ease}',
     '.toast.show{opacity:1;transform:none}',
-    '.toast[hidden]{display:none}'
+    '.toast[hidden]{display:none}',
+    ':host(.dark) .fab{background:rgba(30,33,42,.74);border-color:rgba(255,255,255,.14);',
+    'color:rgba(232,236,244,.68);box-shadow:0 2px 10px rgba(0,0,0,.45)}',
+    ':host(.dark) .fab:active{background:rgba(48,52,64,.92)}',
+    ':host(.dark) .fab.armed{box-shadow:0 2px 10px rgba(0,0,0,.45),0 0 0 2px rgba(122,150,255,.4)}',
+    ':host(.dark) .fab.dragging{box-shadow:0 8px 22px rgba(0,0,0,.55),0 0 0 2px rgba(122,150,255,.45)}',
+    ':host(.dark) .panel{background:rgba(24,26,33,.9);color:#e7eaf2;border-color:rgba(255,255,255,.1);',
+    'box-shadow:0 8px 28px rgba(0,0,0,.55);color-scheme:dark}',
+    ':host(.dark) .title{color:#d7dce7}',
+    ':host(.dark) .ver{color:#78808f}',
+    ':host(.dark) .status{color:#9aa2b1}',
+    ':host(.dark) .status.bad{color:#ff8a7a}',
+    ':host(.dark) .close,:host(.dark) .theme{color:#9aa2b1}',
+    ':host(.dark) .theme:active{background:rgba(255,255,255,.12)}',
+    ':host(.dark) .sel{background:rgba(110,140,255,.16);color:#bcc7e6}',
+    ':host(.dark) .seldrop{color:#9aa2b1}',
+    ':host(.dark) .seldrop:active{background:rgba(255,255,255,.12)}',
+    ':host(.dark) .actions button{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.1);color:#dfe4ef}',
+    ':host(.dark) .actions button:active{background:rgba(255,255,255,.12)}',
+    ':host(.dark) .badge{background:rgba(120,150,255,.22);color:#b7c6f7}',
+    ':host(.dark) .pair span:first-child{color:#a3abb9}',
+    ':host(.dark) .notes,:host(.dark) .conf{color:#8d95a3}',
+    ':host(.dark) .warn{color:#e0a94a}',
+    ':host(.dark) .err{color:#ff8a7a}',
+    ':host(.dark) .settings{border-top-color:rgba(255,255,255,.1)}',
+    ':host(.dark) .settings label{color:#9aa2b1}',
+    ':host(.dark) .settings input,:host(.dark) .settings select{background:rgba(255,255,255,.07);',
+    'border-color:rgba(255,255,255,.14);color:#e7eaf2}',
+    ':host(.dark) .hint{color:#8d95a3}',
+    ':host(.dark) .toast{background:rgba(238,241,248,.96);color:#1b1d23;box-shadow:0 6px 20px rgba(0,0,0,.5)}'
   ].join('');
 
   function el(tag, cls, text) {
@@ -921,7 +981,7 @@
 
     const fab = el('button', 'fab', 'TT');
     fab.type = 'button';
-    fab.setAttribute('aria-label', 'Tab Tools — otwórz panel (dwa stuknięcia: szybka odpowiedź)');
+    fab.setAttribute('aria-label', 'Tab Tools — stuknij: panel, dwa stuknięcia: szybka odpowiedź, przytrzymaj: przesuń');
 
     const toast = el('div', 'toast');
     toast.hidden = true;
@@ -934,11 +994,15 @@
     const ver = el('span', 'ver', 'v' + VERSION);
     title.appendChild(ver);
     const status = el('span', 'status');
+    const themeBtn = el('button', 'theme', '☾');
+    themeBtn.type = 'button';
+    themeBtn.setAttribute('aria-label', 'Włącz tryb ciemny');
     const close = el('button', 'close', '×');
     close.type = 'button';
     close.setAttribute('aria-label', 'Zamknij panel');
     bar.appendChild(title);
     bar.appendChild(status);
+    bar.appendChild(themeBtn);
     bar.appendChild(close);
 
     const selChip = el('div', 'sel');
@@ -1022,10 +1086,16 @@
     ui = {
       host: host, fab: fab, panel: panel, toast: toast, status: status, answer: answer,
       buttons: buttons, settings: panelSettings, chip: selChip, chipText: selText,
-      provider: provider, key: key, model: model, hint: hint, file: file
+      provider: provider, key: key, model: model, hint: hint, file: file, theme: themeBtn
     };
 
     fab.addEventListener('click', onFabTap);
+    fab.addEventListener('pointerdown', onFabPointerDown);
+    fab.addEventListener('pointermove', onFabPointerMove);
+    fab.addEventListener('pointerup', onFabPointerUp);
+    fab.addEventListener('pointercancel', onFabPointerUp);
+
+    themeBtn.addEventListener('click', toggleTheme);
 
     close.addEventListener('click', () => closePanel());
 
@@ -1098,6 +1168,22 @@
     if (!ui) return;
     ui.status.textContent = text || '';
     ui.status.className = bad ? 'status bad' : 'status';
+  }
+
+  /* ---------- motyw ---------- */
+
+  function applyTheme(mode) {
+    const dark = mode === 'dark';
+    if (!ui) return;
+    ui.host.classList.toggle('dark', dark);
+    ui.theme.textContent = dark ? '☀' : '☾';
+    ui.theme.setAttribute('aria-label', dark ? 'Włącz tryb jasny' : 'Włącz tryb ciemny');
+  }
+
+  function toggleTheme() {
+    const next = uiState.theme === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    saveUiState({ theme: next }).catch(() => {});
   }
 
   function openPanel() {
@@ -1257,6 +1343,31 @@
     ui.toast.hidden = true;
   }
 
+  /* dymek trzyma się przy przycisku, także po przeciągnięciu go w inne miejsce */
+
+  function placeToast() {
+    if (!ui || ui.toast.hidden) return;
+    const fab = ui.fab.getBoundingClientRect();
+    const w = ui.toast.offsetWidth;
+    const h = ui.toast.offsetHeight;
+    const pad = 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let top = fab.top - h - pad;
+    if (top < pad) {
+      top = fab.bottom + pad;
+      if (top + h > vh - pad) top = Math.max(pad, vh - h - pad);
+    }
+    let left = fab.left + fab.width / 2 - w / 2;
+    left = Math.max(pad, Math.min(vw - w - pad, left));
+
+    ui.toast.style.left = Math.round(left) + 'px';
+    ui.toast.style.top = Math.round(top) + 'px';
+    ui.toast.style.right = 'auto';
+    ui.toast.style.bottom = 'auto';
+  }
+
   function showToast(text, ms) {
     if (!ui) return;
     const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 240);
@@ -1264,6 +1375,7 @@
     if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0; }
     ui.toast.textContent = clean;
     ui.toast.hidden = false;
+    placeToast();
     void ui.toast.offsetWidth;
     ui.toast.classList.add('show');
     if (ms) toastTimer = setTimeout(hideToast, ms);
@@ -1300,6 +1412,8 @@
   let fabLastTap = 0;
 
   function onFabTap() {
+    if (Date.now() < suppressClickUntil) return;
+    if (drag && drag.active) return;
     const now = Date.now();
     if (now - fabLastTap < QUICK_TAP_MS) {
       fabLastTap = 0;
@@ -1317,13 +1431,124 @@
     }, QUICK_TAP_MS);
   }
 
+  /* ---------- przesuwanie przycisku (przytrzymanie i przeciągnięcie) ---------- */
+
+  const DRAG_HOLD_MS = 380;
+  const DRAG_SLOP = 8;
+  const FAB_PAD = 6;
+
+  let drag = null;
+  let suppressClickUntil = 0;
+
+  function moveFab(x, y) {
+    if (!ui) return;
+    const w = ui.fab.offsetWidth || 40;
+    const h = ui.fab.offsetHeight || 40;
+    const maxX = Math.max(FAB_PAD, window.innerWidth - w - FAB_PAD);
+    const maxY = Math.max(FAB_PAD, window.innerHeight - h - FAB_PAD);
+    ui.fab.style.left = Math.round(Math.min(maxX, Math.max(FAB_PAD, x))) + 'px';
+    ui.fab.style.top = Math.round(Math.min(maxY, Math.max(FAB_PAD, y))) + 'px';
+    ui.fab.style.right = 'auto';
+    ui.fab.style.bottom = 'auto';
+  }
+
+  function applyFabPos() {
+    if (!ui || !uiState.fab) return;
+    const w = ui.fab.offsetWidth || 40;
+    const h = ui.fab.offsetHeight || 40;
+    moveFab(uiState.fab.x * window.innerWidth - w / 2, uiState.fab.y * window.innerHeight - h / 2);
+  }
+
+  function fabFraction() {
+    if (!ui) return null;
+    const rect = ui.fab.getBoundingClientRect();
+    return {
+      x: Math.min(1, Math.max(0, (rect.left + rect.width / 2) / Math.max(1, window.innerWidth))),
+      y: Math.min(1, Math.max(0, (rect.top + rect.height / 2) / Math.max(1, window.innerHeight)))
+    };
+  }
+
+  function endDrag() {
+    if (!drag) return;
+    const wasDragging = drag.active;
+    const id = drag.id;
+    if (drag.holdTimer) clearTimeout(drag.holdTimer);
+    drag = null;
+    if (!ui) return;
+    ui.fab.classList.remove('dragging');
+    try { ui.fab.releasePointerCapture(id); } catch (err) { /* wskaźnik już zwolniony */ }
+    if (!wasDragging) return;
+    suppressClickUntil = Date.now() + 700;
+    saveUiState({ fab: fabFraction() }).catch(() => {});
+    if (!ui.toast.hidden) placeToast();
+  }
+
+  function beginDrag() {
+    if (!drag || !ui) return;
+    drag.holdTimer = 0;
+    drag.active = true;
+    if (fabTapTimer) { clearTimeout(fabTapTimer); fabTapTimer = 0; }
+    fabLastTap = 0;
+    ui.fab.classList.add('dragging');
+    hideToast();
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      try { navigator.vibrate(8); } catch (err) { /* brak wibracji */ }
+    }
+  }
+
+  function onFabPointerDown(event) {
+    if (!ui) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (drag) endDrag();
+    const rect = ui.fab.getBoundingClientRect();
+    drag = {
+      id: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      grabX: event.clientX - rect.left,
+      grabY: event.clientY - rect.top,
+      active: false,
+      holdTimer: 0
+    };
+    drag.holdTimer = setTimeout(beginDrag, DRAG_HOLD_MS);
+    try { ui.fab.setPointerCapture(event.pointerId); } catch (err) { /* bez przechwytywania */ }
+  }
+
+  function onFabPointerMove(event) {
+    if (!drag || event.pointerId !== drag.id) return;
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    if (!drag.active) {
+      if (Math.abs(dx) > DRAG_SLOP || Math.abs(dy) > DRAG_SLOP) endDrag();
+      return;
+    }
+    if (event.cancelable) event.preventDefault();
+    moveFab(event.clientX - drag.grabX, event.clientY - drag.grabY);
+  }
+
+  function onFabPointerUp(event) {
+    if (!drag || event.pointerId !== drag.id) return;
+    endDrag();
+  }
+
+  function onViewportResize() {
+    if (!ui) return;
+    if (uiState.fab) applyFabPos();
+    if (!ui.toast.hidden) placeToast();
+  }
+
   /* ---------- start ---------- */
 
-  function start() {
+  async function start() {
     mount();
     document.addEventListener('selectionchange', onSelectionChange, true);
     document.addEventListener('pointerdown', onDocumentPointerDown, true);
+    window.addEventListener('resize', onViewportResize, true);
+    window.addEventListener('orientationchange', onViewportResize, true);
     updateArmed();
+    await loadUiState().catch(() => {});
+    applyTheme(uiState.theme);
+    applyFabPos();
     getSettings().then(() => { if (ui) fillKeyFields(); }).catch(() => {});
   }
 
