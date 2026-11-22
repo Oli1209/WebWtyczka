@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tab Tools (iOS)
 // @namespace    tab-tools-ios
-// @version      2.0.1
+// @version      2.0.2
 // @description  Rozwiązuje pytanie z zaznaczenia, tekstu strony albo ze zdjęcia. Gemini, OpenRouter albo Groq.
 // @match        *://*/*
 // @grant        GM.xmlHttpRequest
@@ -820,7 +820,7 @@
   /* ---------- panel ---------- */
 
   const HOST_ID = 'tt-ios-host';
-  const VERSION = '2.0.1'; // trzymaj zgodne z @version wyżej
+  const VERSION = '2.0.2'; // trzymaj zgodne z @version wyżej
 
   const CSS = [
     ':host{all:initial}',
@@ -886,7 +886,16 @@
     '.settings .row{margin-top:10px;align-items:center}',
     '.save{min-height:36px;padding:0 14px;border:0;border-radius:9px;background:rgba(59,91,219,.9);color:#fff;',
     'font-family:inherit;font-size:13px;font-weight:500;line-height:1}',
-    '.hint{font-size:11px;color:#9aa0ab}'
+    '.hint{font-size:11px;color:#9aa0ab}',
+    '.toast{position:fixed;right:12px;bottom:calc(66px + env(safe-area-inset-bottom));max-width:calc(100% - 24px);',
+    'padding:7px 10px;border-radius:12px;background:rgba(28,28,30,.9);color:#fff;',
+    'font:13px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;',
+    '-webkit-text-size-adjust:100%;text-size-adjust:100%;',
+    'display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden;',
+    'box-shadow:0 6px 20px rgba(16,20,32,.24);z-index:2147483002;pointer-events:none;',
+    'opacity:0;transform:translateY(4px);transition:opacity .15s ease,transform .15s ease}',
+    '.toast.show{opacity:1;transform:none}',
+    '.toast[hidden]{display:none}'
   ].join('');
 
   function el(tag, cls, text) {
@@ -912,7 +921,10 @@
 
     const fab = el('button', 'fab', 'TT');
     fab.type = 'button';
-    fab.setAttribute('aria-label', 'Tab Tools — otwórz panel');
+    fab.setAttribute('aria-label', 'Tab Tools — otwórz panel (dwa stuknięcia: szybka odpowiedź)');
+
+    const toast = el('div', 'toast');
+    toast.hidden = true;
 
     const panel = el('section', 'panel');
     panel.hidden = true;
@@ -1001,21 +1013,19 @@
     panel.appendChild(answer);
     panel.appendChild(panelSettings);
     panel.appendChild(file);
+    shadow.appendChild(toast);
     shadow.appendChild(fab);
     shadow.appendChild(panel);
 
     (document.body || document.documentElement).appendChild(host);
 
     ui = {
-      host: host, fab: fab, panel: panel, status: status, answer: answer,
+      host: host, fab: fab, panel: panel, toast: toast, status: status, answer: answer,
       buttons: buttons, settings: panelSettings, chip: selChip, chipText: selText,
       provider: provider, key: key, model: model, hint: hint, file: file
     };
 
-    fab.addEventListener('click', () => {
-      if (panel.hidden) openPanel();
-      else closePanel();
-    });
+    fab.addEventListener('click', onFabTap);
 
     close.addEventListener('click', () => closePanel());
 
@@ -1178,7 +1188,7 @@
   }
 
   async function solveText(text, label) {
-    if (busy) return;
+    if (busy) return { error: 'Trwa już odpowiedź' };
     const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, PAGE_TEXT_LIMIT);
     if (!clean) {
       say('Brak tekstu do wysłania', true);
@@ -1195,11 +1205,14 @@
         answer = parseAnswer(await askModel(SYS_TEXT, clean + RETRY_EMPTY, null, SCHEMA_ANSWER));
       }
       if (isEmptyAnswer(answer)) throw new Error('Model nie odczytał pytania — spróbuj ponownie');
-      renderAnswer(finalizeSingle(answer));
+      const final = finalizeSingle(answer);
+      renderAnswer(final);
       say('');
+      return { answer: final };
     } catch (err) {
       say(msgOf(err), true);
       ui.answer.replaceChildren(el('p', 'err', msgOf(err)));
+      return { error: msgOf(err) };
     } finally {
       setBusy(false);
     }
@@ -1228,6 +1241,80 @@
     } finally {
       setBusy(false);
     }
+  }
+
+  /* ---------- szybka odpowiedź (dwa stuknięcia w TT) ---------- */
+
+  const AUTO_TOAST_MS = 1000;
+  const QUICK_TAP_MS = 400;
+
+  let toastTimer = 0;
+
+  function hideToast() {
+    if (!ui) return;
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0; }
+    ui.toast.classList.remove('show');
+    ui.toast.hidden = true;
+  }
+
+  function showToast(text, ms) {
+    if (!ui) return;
+    const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+    if (!clean) { hideToast(); return; }
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0; }
+    ui.toast.textContent = clean;
+    ui.toast.hidden = false;
+    void ui.toast.offsetWidth;
+    ui.toast.classList.add('show');
+    if (ms) toastTimer = setTimeout(hideToast, ms);
+  }
+
+  function answerLine(answer) {
+    if (!answer) return '';
+    if (answer.taskType === 'match' && answer.pairs.length) {
+      return answer.pairs.map((p) => p.left + ' → ' + p.right).join(' · ');
+    }
+    if (answer.answers.length) {
+      return answer.answers.map((item) => (item.label ? item.label + '. ' : '') + item.text).join(' · ');
+    }
+    return answer.openAnswer || '';
+  }
+
+  async function quickSolve() {
+    if (!ui || busy) return;
+    const picked = currentSelection();
+    if (!picked.text) {
+      showToast('Najpierw zaznacz tekst, potem stuknij TT dwa razy', 2000);
+      return;
+    }
+    refreshSelChip();
+    showToast('Analizuję…', 0);
+    const result = await solveText(picked.text, '');
+    if (!result) { hideToast(); return; }
+    if (result.error) { showToast(result.error, 2000); return; }
+    const line = answerLine(result.answer);
+    showToast(line || 'Model nie zwrócił odpowiedzi', line ? AUTO_TOAST_MS : 2000);
+  }
+
+  let fabTapTimer = 0;
+  let fabLastTap = 0;
+
+  function onFabTap() {
+    const now = Date.now();
+    if (now - fabLastTap < QUICK_TAP_MS) {
+      fabLastTap = 0;
+      if (fabTapTimer) { clearTimeout(fabTapTimer); fabTapTimer = 0; }
+      quickSolve();
+      return;
+    }
+    fabLastTap = now;
+    if (fabTapTimer) return;
+    fabTapTimer = setTimeout(() => {
+      fabTapTimer = 0;
+      fabLastTap = 0;
+      if (ui.panel.hidden) openPanel();
+      else closePanel();
+    }, QUICK_TAP_MS);
   }
 
   /* ---------- start ---------- */

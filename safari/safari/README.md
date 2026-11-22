@@ -41,7 +41,7 @@ zostanie wysłany.
 
 Aktualizacja: po zmianie pliku na GitHubie otwórz ten sam link raw i
 zainstaluj nowszą wersję (Userscripts podmieni skrypt). Numer wersji widać
-w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.0.1`).
+w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.0.2`).
 
 ## Jak używać
 
@@ -51,6 +51,11 @@ w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.0.1`).
   jego długość widać w panelu nad przyciskami (np. „Pytanie 4 ... · 182
   znaków”), a krzyżyk obok niego czyści pamięć i zaznaczenie na stronie.
   Pamiętane zaznaczenie trzyma się 2 minuty.
+- **Dwukrotne stuknięcie w TT** — szybka odpowiedź bez panelu: zaznacz
+  tekst i stuknij **TT** dwa razy (w ciągu ok. 0,4 s). Zaznaczenie od razu
+  leci do modelu, a odpowiedź mignie na 1 sekundę w małym ciemnym dymku nad
+  przyciskiem. Jedno stuknięcie nadal otwiera i zamyka panel, tylko z krótkim
+  opóźnieniem, żeby odróżnić je od dwukrotnego.
 - **Tekst strony** — wysyła tekst widoczny na stronie (do 12000 znaków).
 - **Zdjęcie** — wybierz zdjęcie z biblioteki albo zrób nowe; do promptu
   doklejany jest też tekst strony, żeby model lepiej odczytał treść.
