@@ -820,6 +820,7 @@
   /* ---------- panel ---------- */
 
   const HOST_ID = 'tt-ios-host';
+  const VERSION = '2.0.0'; // trzymaj zgodne z @version wyżej
 
   const CSS = [
     ':host{all:initial}',
@@ -846,6 +847,7 @@
     '.panel[hidden]{display:none}',
     '.bar{display:flex;align-items:center;gap:8px;margin-bottom:8px}',
     '.title{font-weight:600;font-size:13px;color:#3a3f4b}',
+    '.ver{margin-left:4px;font-weight:400;font-size:11px;color:#a0a5b0}',
     '.status{flex:1;min-width:0;font-size:11px;color:#8a8f9a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.status.bad{color:#c0392b}',
     '.close{width:28px;height:28px;border:0;border-radius:8px;background:transparent;color:#8a8f9a;font-size:18px;line-height:1}',
@@ -916,7 +918,9 @@
     panel.hidden = true;
 
     const bar = el('div', 'bar');
-    const title = el('span', 'title', 'Tab Tools');
+    const title = el('span', 'title', 'Tab Tools ');
+    const ver = el('span', 'ver', 'v' + VERSION);
+    title.appendChild(ver);
     const status = el('span', 'status');
     const close = el('button', 'close', '×');
     close.type = 'button';

@@ -14,9 +14,9 @@ zostanie wysłany.
 1. Wrzuć ten folder do publicznego repozytorium, np. tak:
 
    ```
-   twoj-login/tab-tools/
-     safari/tab-tools.user.js
-     safari/README.md
+   Oli1209/WebWtyczka/
+     safari/safari/tab-tools.user.js
+     safari/safari/README.md
    ```
 
 2. Zezwól Safari na rozszerzenia:
@@ -26,7 +26,7 @@ zostanie wysłany.
 3. Na telefonie otwórz w Safari plik z GitHuba. Najprościej link **raw**:
 
    ```
-   https://raw.githubusercontent.com/twoj-login/tab-tools/main/safari/tab-tools.user.js
+   https://raw.githubusercontent.com/Oli1209/WebWtyczka/main/safari/safari/tab-tools.user.js
    ```
 
    Otwórz go jako zwykłą stronę (nie przez aplikację GitHub). Userscripts
@@ -40,7 +40,8 @@ zostanie wysłany.
 6. **Zapisz**.
 
 Aktualizacja: po zmianie pliku na GitHubie otwórz ten sam link raw i
-zainstaluj nowszą wersję (Userscripts podmieni skrypt).
+zainstaluj nowszą wersję (Userscripts podmieni skrypt). Numer wersji widać
+w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.0.0`).
 
 ## Jak używać
 
