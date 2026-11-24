@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tab Tools (iOS)
 // @namespace    tab-tools-ios
-// @version      2.1.0
+// @version      2.2.0
 // @description  Rozwiązuje pytanie z zaznaczenia, tekstu strony albo ze zdjęcia. Gemini, OpenRouter albo Groq.
 // @match        *://*/*
 // @grant        GM.xmlHttpRequest
@@ -127,7 +127,7 @@
   const SCHEMA_ANSWER = {
     type: 'OBJECT',
     properties: {
-      taskType: { type: 'STRING', enum: ['single', 'multi', 'truefalse', 'numeric', 'open', 'match', 'unknown'] },
+      taskType: { type: 'STRING', enum: ['single', 'multi', 'truefalse', 'numeric', 'open', 'match', 'gaps', 'order', 'table', 'unknown'] },
       question: { type: 'STRING' },
       options: { type: 'ARRAY', items: ITEM },
       answers: { type: 'ARRAY', items: ITEM },
@@ -155,9 +155,12 @@
     'multi: wszystkie poprawne warianty w answers.',
     'truefalse: taskType "truefalse", openAnswer dokładnie "Prawda" albo "Fałsz", answers puste.',
     'numeric: taskType "numeric", openAnswer tylko wynik z jednostką, bez obliczeń, answers puste.',
-    'open: taskType "open", openAnswer 1-2 zdania, bez liter opcji, answers puste.',
+    'open: taskType "open", openAnswer jedno krótkie zdanie, proste słowa, bez wyliczeń i myślników, najwyżej 200 znaków, answers puste.',
+    'gaps: taskType "gaps", luki w answers jako {label: numer luki, text: wpisywane słowo}, openAnswer "".',
+    'order: taskType "order", elementy w answers w poprawnej kolejności, label to numer pozycji.',
+    'table: taskType "table", wiersze tabeli w answers jako {label: numer wiersza, text: "Prawda" albo "Fałsz"}.',
     'match: taskType "match", pary w pairs jako {left, right}, answers puste.',
-    'Przy open, numeric, truefalse i match answers MUSI być pustą tablicą.',
+    'Przy open, numeric, truefalse i match answers MUSI być pustą tablicą, a przy gaps, order i table openAnswer MUSI być pusty.',
     'Przed odpowiedzią sprawdź, czy wybrany wariant naprawdę rozwiązuje pytanie. Nie zgaduj: przy niepewności obniż confidence.',
     'notes: najwyżej 200 znaków, tylko uwagi, inaczej "".',
     'Pytanie nieczytelne albo przycięte: taskType "unknown", answers [], openAnswer "", confidence 0.',
@@ -178,10 +181,19 @@
 
   function tidy(text) {
     return String(text == null ? '' : text)
+      .replace(/\r/g, '')
+      .replace(/[ \t]*\n+[ \t]*/g, ' ')
       .replace(/\s*[—–]\s*/g, ', ')
       .replace(/,\s*([,.!?;:])/g, '$1')
       .replace(/\s{2,}/g, ' ')
+      .replace(/^[,\s]+/, '')
       .trim();
+  }
+
+  /* odpowiedź otwarta ma być jednym naturalnym zdaniem, bez listy i myślników */
+  function plain(text) {
+    return tidy(String(text == null ? '' : text)
+      .replace(/^[ \t]*(?:[-•*]|\d{1,2}[.)])[ \t]+/gm, ''));
   }
 
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, Math.round(Number(n) || 0)));
@@ -673,7 +685,7 @@
     throw new Error('Model nie zwrócił czytelnej odpowiedzi — spróbuj ponownie');
   }
 
-  const TYPES = ['single', 'multi', 'truefalse', 'numeric', 'open', 'match', 'unknown'];
+  const TYPES = ['single', 'multi', 'truefalse', 'numeric', 'open', 'match', 'gaps', 'order', 'table', 'unknown'];
 
   function cleanItem(o) {
     const src = o && typeof o === 'object' ? o : { text: o };
@@ -701,9 +713,16 @@
         .slice(0, 14)
       : [];
 
-    let openAnswer = tidy(String(a.openAnswer || '').trim().slice(0, 2000));
+    let openAnswer = plain(String(a.openAnswer || '').trim().slice(0, 2000));
     if (!openAnswer && answers.length && (type === 'open' || type === 'numeric' || type === 'truefalse')) {
       openAnswer = answers[0].text;
+    }
+
+    const listTypes = ['single', 'multi', 'gaps', 'order', 'table'];
+    if (listTypes.indexOf(type) !== -1 && !answers.length) {
+      if (openAnswer) type = 'open';
+      else if (pairs.length) type = 'match';
+      else type = 'unknown';
     }
 
     if (type === 'match' && !pairs.length) {
@@ -807,6 +826,50 @@
     return body ? String(body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, PAGE_TEXT_LIMIT) : '';
   }
 
+  /* ---------- pierwsze widoczne zadanie (tryb cichy) ---------- */
+
+  const TASK_HINT = /(\?|prawda|fałsz|uzupełnij|wpisz|wybierz|połącz|dopasuj|uporządkuj|oblicz|podaj)/i;
+  const TASK_SELECTOR = 'p,li,td,th,label,dd,dt,blockquote,h1,h2,h3,h4,h5';
+
+  function onScreen(node) {
+    const rect = node.getBoundingClientRect();
+    if (rect.width < 40 || rect.height < 8) return false;
+    if (rect.bottom < 8 || rect.top > window.innerHeight - 8) return false;
+    const style = window.getComputedStyle(node);
+    return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+  }
+
+  function taskBox(node) {
+    return node.closest('li,tr,fieldset') || node.parentElement || node;
+  }
+
+  function isSolved(node) {
+    const box = taskBox(node);
+    if (box.querySelector('input[type=radio]:checked,input[type=checkbox]:checked')) return true;
+    const blanks = box.querySelectorAll('input[type=text],input:not([type]),textarea');
+    for (let i = 0; i < blanks.length; i++) {
+      if (String(blanks[i].value || '').trim()) return true;
+    }
+    return false;
+  }
+
+  function firstVisibleTask() {
+    const nodes = document.querySelectorAll(TASK_SELECTOR);
+    let seen = 0;
+    for (let i = 0; i < nodes.length && seen < 4000; i++) {
+      const node = nodes[i];
+      seen++;
+      if (!onScreen(node)) continue;
+      const own = String(node.innerText || '').replace(/\s+/g, ' ').trim();
+      if (own.length < 12 || own.length > 700) continue;
+      if (!TASK_HINT.test(own)) continue;
+      if (isSolved(node)) continue;
+      const text = String(taskBox(node).innerText || '').replace(/\s+/g, ' ').trim();
+      return (text || own).slice(0, 900);
+    }
+    return '';
+  }
+
   function imageUserText() {
     const text = pageText().slice(0, PROMPT_TEXT_LIMIT);
     if (!text) return USER_IMAGE;
@@ -842,10 +905,44 @@
     });
   }
 
+  /* Prawdziwy zrzut ekranu. Safari na iOS 27+ ma getDisplayMedia, ale przy
+     każdym wywołaniu pokazuje systemowe okno wyboru ekranu. Gdy API nie ma,
+     strona nie jest HTTPS albo użytkownik odmówi, zwracamy null i tryb cichy
+     korzysta z tekstu strony. */
+  async function grabFrame() {
+    const media = typeof navigator !== 'undefined' ? navigator.mediaDevices : null;
+    if (!media || typeof media.getDisplayMedia !== 'function') return null;
+    let stream = null;
+    try {
+      stream = await media.getDisplayMedia({ video: true, audio: false });
+      const video = document.createElement('video');
+      video.muted = true;
+      video.playsInline = true;
+      video.srcObject = stream;
+      await video.play();
+      await new Promise((done) => setTimeout(done, 200));
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      if (!width || !height) return null;
+      const scale = Math.min(1, 1600 / width);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      return { mime: 'image/jpeg', b64: canvas.toDataURL('image/jpeg', 0.82).split(',')[1] };
+    } catch (err) {
+      return null;
+    } finally {
+      if (stream) {
+        try { stream.getTracks().forEach((track) => track.stop()); } catch (err) { /* już zatrzymany */ }
+      }
+    }
+  }
+
   /* ---------- panel ---------- */
 
   const HOST_ID = 'tt-ios-host';
-  const VERSION = '2.1.0'; // trzymaj zgodne z @version wyżej
+  const VERSION = '2.2.0'; // trzymaj zgodne z @version wyżej
 
   const CSS = [
     ':host{all:initial}',
@@ -922,11 +1019,17 @@
     'padding:7px 10px;border-radius:12px;background:rgba(28,28,30,.9);color:#fff;',
     'font:13px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;',
     '-webkit-text-size-adjust:100%;text-size-adjust:100%;',
-    'display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden;',
+    'display:flex;flex-direction:column;gap:5px;align-items:stretch;overflow:hidden;',
     'box-shadow:0 6px 20px rgba(16,20,32,.24);z-index:2147483002;pointer-events:none;',
     'opacity:0;transform:translateY(4px);transition:opacity .15s ease,transform .15s ease}',
     '.toast.show{opacity:1;transform:none}',
     '.toast[hidden]{display:none}',
+    '.toast.action{pointer-events:auto}',
+    '.toast.small{font-size:12px;line-height:1.3}',
+    '.toasttext{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:5;overflow:hidden;overflow-wrap:anywhere}',
+    '.toastbtn{align-self:flex-start;min-height:28px;padding:0 11px;border:0;border-radius:7px;',
+    'background:rgba(255,255,255,.22);color:inherit;font:600 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}',
+    '.toastbtn:active{background:rgba(255,255,255,.36)}',
     ':host(.dark) .fab{background:rgba(30,33,42,.74);border-color:rgba(255,255,255,.14);',
     'color:rgba(232,236,244,.68);box-shadow:0 2px 10px rgba(0,0,0,.45)}',
     ':host(.dark) .fab:active{background:rgba(48,52,64,.92)}',
@@ -955,7 +1058,9 @@
     ':host(.dark) .settings input,:host(.dark) .settings select{background:rgba(255,255,255,.07);',
     'border-color:rgba(255,255,255,.14);color:#e7eaf2}',
     ':host(.dark) .hint{color:#8d95a3}',
-    ':host(.dark) .toast{background:rgba(238,241,248,.96);color:#1b1d23;box-shadow:0 6px 20px rgba(0,0,0,.5)}'
+    ':host(.dark) .toast{background:rgba(238,241,248,.96);color:#1b1d23;box-shadow:0 6px 20px rgba(0,0,0,.5)}',
+    ':host(.dark) .toastbtn{background:rgba(20,24,40,.14)}',
+    ':host(.dark) .toastbtn:active{background:rgba(20,24,40,.24)}'
   ].join('');
 
   function el(tag, cls, text) {
@@ -1256,9 +1361,12 @@
         box.appendChild(row);
       });
     } else if (answer.answers.length) {
+      const numbered = answer.taskType === 'order' || answer.taskType === 'gaps' || answer.taskType === 'table';
       answer.answers.forEach((item, index) => {
         const row = el('div', 'row');
-        row.appendChild(el('span', 'badge', (item.label || '').trim() || String.fromCharCode(65 + index)));
+        const badge = (item.label || '').trim()
+          || (numbered ? String(index + 1) : String.fromCharCode(65 + index));
+        row.appendChild(el('span', 'badge', badge));
         row.appendChild(el('span', 'txt', item.text));
         box.appendChild(row);
       });
@@ -1273,31 +1381,43 @@
     }
   }
 
-  async function solveText(text, label) {
+  async function askAnswer(system, userText, img) {
+    let answer = parseAnswer(await askModel(system, userText, img, SCHEMA_ANSWER));
+    if (isEmptyAnswer(answer)) {
+      answer = parseAnswer(await askModel(system, userText + RETRY_EMPTY, img, SCHEMA_ANSWER));
+    }
+    if (isEmptyAnswer(answer)) throw new Error('Model nie odczytał pytania — spróbuj ponownie');
+    return finalizeSingle(answer);
+  }
+
+  async function solveText(text, label, opt) {
     if (busy) return { error: 'Trwa już odpowiedź' };
+    const silent = Boolean(opt && opt.silent);
+
     const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, PAGE_TEXT_LIMIT);
     if (!clean) {
-      say('Brak tekstu do wysłania', true);
-      return;
+      if (!silent) say('Brak tekstu do wysłania', true);
+      return { error: 'Brak tekstu do wysłania' };
     }
 
     setBusy(true);
-    say(label ? 'Analizuję ' + label + '…' : 'Analizuję…');
-    renderAnswer(null);
+    if (silent) hideToast();
+    else {
+      say(label ? 'Analizuję ' + label + '…' : 'Analizuję…');
+      renderAnswer(null);
+    }
 
     try {
-      let answer = parseAnswer(await askModel(SYS_TEXT, clean, null, SCHEMA_ANSWER));
-      if (isEmptyAnswer(answer)) {
-        answer = parseAnswer(await askModel(SYS_TEXT, clean + RETRY_EMPTY, null, SCHEMA_ANSWER));
-      }
-      if (isEmptyAnswer(answer)) throw new Error('Model nie odczytał pytania — spróbuj ponownie');
-      const final = finalizeSingle(answer);
+      const final = await askAnswer(SYS_TEXT, clean, null);
+      if (silent) return { answer: final };
       renderAnswer(final);
       say('');
       return { answer: final };
     } catch (err) {
-      say(msgOf(err), true);
-      ui.answer.replaceChildren(el('p', 'err', msgOf(err)));
+      if (!silent) {
+        say(msgOf(err), true);
+        ui.answer.replaceChildren(el('p', 'err', msgOf(err)));
+      }
       return { error: msgOf(err) };
     } finally {
       setBusy(false);
@@ -1313,13 +1433,7 @@
     try {
       const img = await loadImage(file);
       say('Analizuję…');
-      const userText = imageUserText();
-      let answer = parseAnswer(await askModel(SYS_IMAGE, userText, img, SCHEMA_ANSWER));
-      if (isEmptyAnswer(answer)) {
-        answer = parseAnswer(await askModel(SYS_IMAGE, userText + RETRY_EMPTY, img, SCHEMA_ANSWER));
-      }
-      if (isEmptyAnswer(answer)) throw new Error('Model nie odczytał pytania — spróbuj ponownie');
-      renderAnswer(finalizeSingle(answer));
+      renderAnswer(await askAnswer(SYS_IMAGE, imageUserText(), img));
       say('');
     } catch (err) {
       say(msgOf(err), true);
@@ -1331,14 +1445,18 @@
 
   /* ---------- szybka odpowiedź (dwa stuknięcia w TT) ---------- */
 
-  const AUTO_TOAST_MS = 1000;
   const QUICK_TAP_MS = 400;
+  const SHORT_TOAST_MS = 4000;
+  const DONE_TOAST_MS = 2800;
+  const COPY_TOAST_MS = 15000;
 
   let toastTimer = 0;
+  let toastAction = null;
 
   function hideToast() {
     if (!ui) return;
     if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0; }
+    toastAction = null;
     ui.toast.classList.remove('show');
     ui.toast.hidden = true;
   }
@@ -1368,17 +1486,69 @@
     ui.toast.style.bottom = 'auto';
   }
 
-  function showToast(text, ms) {
+  function copyText(text) {
+    const value = String(text || '');
+    if (!value) return Promise.resolve(false);
+    const api = typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText
+      ? navigator.clipboard.writeText(value).then(() => true, () => false)
+      : Promise.resolve(false);
+    return api.then((copied) => {
+      if (copied) return true;
+      try {
+        const area = document.createElement('textarea');
+        area.value = value;
+        area.setAttribute('readonly', '');
+        area.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+        document.body.appendChild(area);
+        area.select();
+        area.setSelectionRange(0, value.length);
+        const done = document.execCommand && document.execCommand('copy');
+        document.body.removeChild(area);
+        return Boolean(done);
+      } catch (err) { return false; }
+    });
+  }
+
+  function showToast(text, ms, opt) {
     if (!ui) return;
     const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 240);
     if (!clean) { hideToast(); return; }
     if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0; }
-    ui.toast.textContent = clean;
+    const options = opt || {};
+    ui.toast.replaceChildren(el('span', 'toasttext', clean));
+    ui.toast.className = 'toast';
+    toastAction = typeof options.run === 'function' ? options.run : null;
+    if (options.action) {
+      const button = el('button', 'toastbtn', options.action);
+      button.type = 'button';
+      button.addEventListener('click', onToastButton);
+      ui.toast.appendChild(button);
+      ui.toast.classList.add('action');
+    }
+    if (options.small) ui.toast.classList.add('small');
     ui.toast.hidden = false;
     placeToast();
     void ui.toast.offsetWidth;
     ui.toast.classList.add('show');
     if (ms) toastTimer = setTimeout(hideToast, ms);
+  }
+
+  function onToastButton() {
+    if (!toastAction) return;
+    const run = toastAction;
+    const button = ui ? ui.toast.querySelector('.toastbtn') : null;
+    if (button) button.disabled = true;
+    run().then((copied) => {
+      if (!ui) return;
+      if (!copied) {
+        if (button) { button.disabled = false; button.textContent = 'Skopiuj'; }
+        return;
+      }
+      toastAction = null;
+      if (button) button.textContent = 'Skopiowano';
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(hideToast, 1800);
+    });
   }
 
   function answerLine(answer) {
@@ -1392,6 +1562,28 @@
     return answer.openAnswer || '';
   }
 
+  function isShortAnswer(answer) {
+    if (!answer) return false;
+    const line = answerLine(answer);
+    if (!line) return false;
+    if (answer.openAnswer) return line.length <= 48 && line.split(/\s+/).filter(Boolean).length <= 4;
+    return line.length <= 160;
+  }
+
+  async function presentAnswer(answer) {
+    const line = answerLine(answer);
+    if (!line) { showToast('Model nie zwrócił odpowiedzi', 2200); return; }
+    if (isShortAnswer(answer)) {
+      showToast(line, SHORT_TOAST_MS, { small: true });
+      return;
+    }
+    if (await copyText(line)) {
+      showToast('Gotowe', DONE_TOAST_MS);
+      return;
+    }
+    showToast('Gotowe', COPY_TOAST_MS, { action: 'Skopiuj', run: () => copyText(line) });
+  }
+
   async function quickSolve() {
     if (!ui || busy) return;
     const picked = currentSelection();
@@ -1403,16 +1595,59 @@
     showToast('Analizuję…', 0);
     const result = await solveText(picked.text, '');
     if (!result) { hideToast(); return; }
-    if (result.error) { showToast(result.error, 2000); return; }
-    const line = answerLine(result.answer);
-    showToast(line || 'Model nie zwrócił odpowiedzi', line ? AUTO_TOAST_MS : 2000);
+    if (result.error) { showToast(result.error, 2200); return; }
+    await presentAnswer(result.answer);
+  }
+
+  async function solveImageSilent(img, context) {
+    if (busy) return { error: 'Trwa już odpowiedź' };
+    setBusy(true);
+    try {
+      const text = String(context || '').trim();
+      const userText = text
+        ? 'Rozwiąż pierwsze widoczne nierozwiązane zadanie ze zdjęcia. Pomiń zadania już wypełnione lub zaznaczone. Pomocniczy tekst strony:\n' + text.slice(0, PROMPT_TEXT_LIMIT)
+        : 'Rozwiąż pierwsze widoczne nierozwiązane zadanie ze zdjęcia. Pomiń zadania już wypełnione lub zaznaczone.';
+      return { answer: await askAnswer(SYS_IMAGE, userText, img) };
+    } catch (err) {
+      return { error: msgOf(err) };
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /* Tryb cichy: bez panelu i bez dymka „Analizuję…”. Najpierw próbuje zrzutu
+     ekranu, a gdy się nie uda, czyta pierwsze widoczne zadanie ze strony. */
+  let capturing = false;
+
+  async function silentSolve() {
+    if (!ui || busy || capturing) return;
+    capturing = true;
+    try {
+      const shot = grabFrame();
+      const task = firstVisibleTask();
+      const picked = task || currentSelection().text;
+      const img = await shot;
+      if (!img && !picked) {
+        showToast('Nie widzę zadania na ekranie', 2200);
+        return;
+      }
+      hideToast();
+      const result = img
+        ? await solveImageSilent(img, picked)
+        : await solveText(picked, '', { silent: true });
+      if (!result) return;
+      if (result.error) { showToast(result.error, 2400); return; }
+      await presentAnswer(result.answer);
+    } finally {
+      capturing = false;
+    }
   }
 
   let fabTapTimer = 0;
   let fabLastTap = 0;
 
   function onFabTap() {
-    if (Date.now() < suppressClickUntil) return;
+    if (Date.now() < suppressClickUntil) { suppressClickUntil = 0; return; }
     if (drag && drag.active) return;
     const now = Date.now();
     if (now - fabLastTap < QUICK_TAP_MS) {
@@ -1434,7 +1669,9 @@
   /* ---------- przesuwanie przycisku (przytrzymanie i przeciągnięcie) ---------- */
 
   const DRAG_HOLD_MS = 380;
+  const HOLD_SILENT_MS = 2000;
   const DRAG_SLOP = 8;
+  const SILENT_SLOP = 12;
   const FAB_PAD = 6;
 
   let drag = null;
@@ -1471,6 +1708,7 @@
   function endDrag() {
     if (!drag) return;
     const wasDragging = drag.active;
+    const wasSilent = Boolean(drag.silent);
     const id = drag.id;
     if (drag.holdTimer) clearTimeout(drag.holdTimer);
     drag = null;
@@ -1478,17 +1716,24 @@
     ui.fab.classList.remove('dragging');
     try { ui.fab.releasePointerCapture(id); } catch (err) { /* wskaźnik już zwolniony */ }
     if (!wasDragging) return;
-    suppressClickUntil = Date.now() + 700;
+    suppressClickUntil = Date.now() + (wasSilent ? 8000 : 700);
     saveUiState({ fab: fabFraction() }).catch(() => {});
     if (!ui.toast.hidden) placeToast();
   }
 
+  /* 0,4 s przytrzymania uzbraja przesuwanie, ale nic nie pokazuje. Kółko
+     powiększa się dopiero przy ruchu palca, więc 2 s bezruchu zostają ciche. */
   function beginDrag() {
     if (!drag || !ui) return;
     drag.holdTimer = 0;
     drag.active = true;
     if (fabTapTimer) { clearTimeout(fabTapTimer); fabTapTimer = 0; }
     fabLastTap = 0;
+  }
+
+  function showDrag() {
+    if (!drag || !ui || drag.shown) return;
+    drag.shown = true;
     ui.fab.classList.add('dragging');
     hideToast();
     if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
@@ -1505,9 +1750,13 @@
       id: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
+      startedAt: Date.now(),
       grabX: event.clientX - rect.left,
       grabY: event.clientY - rect.top,
       active: false,
+      moved: false,
+      shown: false,
+      silent: false,
       holdTimer: 0
     };
     drag.holdTimer = setTimeout(beginDrag, DRAG_HOLD_MS);
@@ -1522,13 +1771,20 @@
       if (Math.abs(dx) > DRAG_SLOP || Math.abs(dy) > DRAG_SLOP) endDrag();
       return;
     }
+    if (Math.abs(dx) > SILENT_SLOP || Math.abs(dy) > SILENT_SLOP) drag.moved = true;
+    if (drag.moved) showDrag();
     if (event.cancelable) event.preventDefault();
     moveFab(event.clientX - drag.grabX, event.clientY - drag.grabY);
   }
 
   function onFabPointerUp(event) {
     if (!drag || event.pointerId !== drag.id) return;
+    if (event.type === 'pointercancel') { endDrag(); return; }
+    /* wywołanie w obsłudze gestu, żeby Safari pozwoliło na getDisplayMedia */
+    const silent = !drag.moved && Date.now() - drag.startedAt >= HOLD_SILENT_MS;
+    drag.silent = silent;
     endDrag();
+    if (silent) silentSolve();
   }
 
   function onViewportResize() {

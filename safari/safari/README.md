@@ -41,7 +41,7 @@ zostanie wysłany.
 
 Aktualizacja: po zmianie pliku na GitHubie otwórz ten sam link raw i
 zainstaluj nowszą wersję (Userscripts podmieni skrypt). Numer wersji widać
-w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.1.0`).
+w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.2.0`).
 
 ## Jak używać
 
@@ -53,19 +53,32 @@ w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.1.0`).
   Pamiętane zaznaczenie trzyma się 2 minuty.
 - **Dwukrotne stuknięcie w TT** — szybka odpowiedź bez panelu: zaznacz
   tekst i stuknij **TT** dwa razy (w ciągu ok. 0,4 s). Zaznaczenie od razu
-  leci do modelu, a odpowiedź mignie na 1 sekundę w małym ciemnym dymku nad
+  leci do modelu, a odpowiedź pojawia się w małym ciemnym dymku nad
   przyciskiem. Jedno stuknięcie nadal otwiera i zamyka panel, tylko z krótkim
   opóźnieniem, żeby odróżnić je od dwukrotnego.
+- **Przytrzymanie TT przez 2 sekundy bez ruchu** — tryb cichy. Skrypt próbuje
+  zrobić zrzut ekranu i wysłać go do modelu bez panelu i bez dymka
+  „Analizuję…”, a gdy zrzut jest niedostępny, czyta pierwsze widoczne,
+  nierozwiązane zadanie ze strony. Krótka odpowiedź (litera, 1-2 słowa,
+  krótka lista) pojawia się w dymku mniejszą czcionką. Dłuższa odpowiedź
+  otwarta trafia do schowka, a dymek mówi **Gotowe**. Jeśli iOS nie pozwoli
+  zapisać do schowka, dymek ma przycisk **Skopiuj**.
 - **Tekst strony** — wysyła tekst widoczny na stronie (do 12000 znaków).
 - **Zdjęcie** — wybierz zdjęcie z biblioteki albo zrób nowe; do promptu
-doklejany jest też tekst strony, żeby model lepiej odczytał treść.
+  doklejany jest też tekst strony, żeby model lepiej odczytał treść.
+- **Typy zadań** — pojedynczy wybór, wielokrotny, prawda/fałsz, liczbowy,
+  otwarty, łączenie par, uzupełnianie luk, układanie w kolejności i tabela
+  Prawda/Fałsz. Odpowiedź otwarta to jedno krótkie zdanie, prostymi słowami,
+  bez listy i myślników. Skrypt nigdy nie wpisuje odpowiedzi na stronę i nie
+  wysyła formularza.
 - **Motyw** — w nagłówku panelu, obok krzyżyka, jest księżyc/słońce:
 jedno stuknięcie przełącza panel i przycisk na jasny albo ciemny. Wybór
 zostaje zapamiętany. Bez zapisanego wyboru skrypt bierze motyw systemowy.
-- **Przesuwanie przycisku** — przytrzymaj **TT** około 0,4 s, aż kółko się
-powiększy i dostanie niebieską obwódkę, potem przeciągnij je w dowolne
-miejsce ekranu. Pozycja zapisuje się i wraca po odświeżeniu strony oraz po
-obrocie telefonu (zawsze w granicach ekranu).
+- **Przesuwanie przycisku** — przytrzymaj **TT** około 0,4 s i rusz palcem;
+  kółko powiększy się i dostanie niebieską obwódkę, gdy zaczniesz przeciągać.
+  Trzymanie bez ruchu przez 2 s uruchamia tryb cichy, więc przeciąganie wymaga
+  ruchu. Pozycja zapisuje się i wraca po odświeżeniu strony oraz po obrocie
+  telefonu (zawsze w granicach ekranu).
 
 Panel jest jasny i półprzezroczysty, a przycisk **TT** jest mały i przygaszony,
 żeby nie zasłaniał strony. Rozjaśnia się, gdy otworzysz panel albo gdy jest
@@ -77,14 +90,18 @@ Dymek szybkiej odpowiedzi trzyma się przy przycisku, więc po przeciągnięciu
 W trybie ciemnym dymek jest jasny, żeby odpowiedź była czytelna.
 
 Odpowiedź pojawia się w panelu pod przyciskami. Przy pewności poniżej 40%
-panel dopisuje ostrzeżenie.
+panel dopisuje ostrzeżenie. Długa odpowiedź otwarta w trybie szybkim i cichym
+nie jest pokazywana w całości: dymek mówi **Gotowe**, a tekst ląduje w
+schowku.
 
 ## Różnice względem wersji Chrome
 
-- Safari na iOS nie pozwala zrobić zrzutu ekranu karty, więc zamiast
-  automatycznego zrzutu jest zdjęcie z biblioteki lub aparatu.
-- Nie ma skrótów klawiszowych ani automatycznego wyłapywania pytań: wszystko
-  uruchamia się stuknięciem w **TT**.
+- Safari na iOS od wersji 27 ma `getDisplayMedia`, ale przy każdym zrzucie
+  pokazuje systemowe okno wyboru ekranu. Sam skrypt nie pokazuje przy tym
+  niczego, jednak systemowe okno jest nie do pominięcia. Na starszym iOS albo
+  bez HTTPS tryb cichy czyta widoczny tekst strony zamiast obrazu ekranu.
+- Nie ma skrótów klawiszowych. Pierwsze widoczne zadanie skrypt wyłapuje
+  tylko po 2 s przytrzymania **TT**.
 - Dotknięcie czegokolwiek poza stroną odznacza tekst w Safari, dlatego
   zaznaczenie jest przechwytywane przy `selectionchange` i trzymane w pamięci
   przez 2 minuty. Dzięki temu kolejność „zaznacz, potem otwórz panel” działa.
