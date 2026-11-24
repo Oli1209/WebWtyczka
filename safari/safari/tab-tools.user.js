@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tab Tools (iOS)
 // @namespace    tab-tools-ios
-// @version      2.2.0
-// @description  Rozwiązuje pytanie z zaznaczenia, tekstu strony albo ze zdjęcia. Gemini, OpenRouter albo Groq.
+// @version      2.3.0
+// @description  Rozwiązuje pytanie z zaznaczenia, tekstu strony albo ze zdjęcia. Gemini, OpenRouter albo Groq, kilka kluczy API z automatycznym przełączaniem.
 // @match        *://*/*
 // @grant        GM.xmlHttpRequest
 // @grant        GM.getValue
@@ -21,11 +21,39 @@
   /* ---------- ustawienia ---------- */
 
   const STORE = 'tt_ios_settings';
+
+  /* Jeden provider może mieć kilka kluczy. Kolejność w tablicy to priorytet:
+     pierwszy działający wygrywa, a przy limicie albo wyczerpaniu środków
+     skrypt sam przechodzi do następnego. */
   const DEFAULTS = {
     provider: 'gemini',
-    keys: { gemini: '', openrouter: '', groq: '' },
-    models: { gemini: 'auto', openrouter: 'auto', groq: 'auto' }
+    platform: 'auto',
+    keys: { gemini: [], openrouter: [], groq: [] },
+    models: { gemini: 'auto', openrouter: 'auto', groq: 'auto' },
+    cooldowns: {}
   };
+
+  const MAX_KEYS = 8;
+
+  function keyList(value) {
+    const parts = Array.isArray(value)
+      ? value
+      : String(value == null ? '' : value).split(/[\s,;]+/);
+    const out = [];
+    parts.forEach((part) => {
+      const key = String(part == null ? '' : part).trim();
+      if (key && out.indexOf(key) === -1) out.push(key);
+    });
+    return out.slice(0, MAX_KEYS);
+  }
+
+  /* krótki, stabilny identyfikator klucza do zapamiętywania karencji */
+  function keyId(key) {
+    const text = String(key || '');
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) | 0;
+    return Math.abs(hash).toString(36) + '-' + text.length;
+  }
 
   async function storeGet(name) {
     try {
@@ -54,18 +82,37 @@
     const raw = saved && typeof saved === 'object' ? saved : {};
     settings = {
       provider: PROVIDERS.indexOf(raw.provider) !== -1 ? raw.provider : DEFAULTS.provider,
-      keys: Object.assign({}, DEFAULTS.keys, raw.keys || {}),
-      models: Object.assign({}, DEFAULTS.models, raw.models || {})
+      platform: PLATFORMS.indexOf(raw.platform) !== -1 ? raw.platform : DEFAULTS.platform,
+      keys: {
+        gemini: keyList(raw.keys && raw.keys.gemini),
+        openrouter: keyList(raw.keys && raw.keys.openrouter),
+        groq: keyList(raw.keys && raw.keys.groq)
+      },
+      models: Object.assign({}, DEFAULTS.models, raw.models || {}),
+      cooldowns: raw.cooldowns && typeof raw.cooldowns === 'object' ? raw.cooldowns : {}
     };
     return settings;
   }
 
   async function saveSettings(patch) {
     const now = await getSettings();
+    const patchKeys = patch.keys || {};
+    const cooldowns = Object.assign({}, now.cooldowns, patch.cooldowns || {});
+    if (patch.resetCooldowns) {
+      Object.keys(cooldowns).forEach((id) => {
+        if (id.indexOf(patch.resetCooldowns + ':') === 0) delete cooldowns[id];
+      });
+    }
     const next = {
       provider: patch.provider || now.provider,
-      keys: Object.assign({}, now.keys, patch.keys || {}),
-      models: Object.assign({}, now.models, patch.models || {})
+      platform: PLATFORMS.indexOf(patch.platform) !== -1 ? patch.platform : now.platform,
+      keys: {
+        gemini: keyList(patchKeys.gemini != null ? patchKeys.gemini : now.keys.gemini),
+        openrouter: keyList(patchKeys.openrouter != null ? patchKeys.openrouter : now.keys.openrouter),
+        groq: keyList(patchKeys.groq != null ? patchKeys.groq : now.keys.groq)
+      },
+      models: Object.assign({}, now.models, patch.models || {}),
+      cooldowns: cooldowns
     };
     settings = next;
     await storeSet(STORE, next);
@@ -100,6 +147,23 @@
 
   const PROVIDERS = ['gemini', 'openrouter', 'groq'];
   const PROVIDER_LABEL = { gemini: 'Gemini', openrouter: 'OpenRouter', groq: 'Groq' };
+
+  /* Dwa tryby działania: Safari iOS (Userscripts) i Firefox Android
+     (Tampermonkey). Różnią się schowkiem, wibracją i obsługą zrzutu ekranu. */
+  const PLATFORMS = ['auto', 'ios', 'android'];
+  const PLATFORM_LABEL = { auto: 'Automatycznie', ios: 'Safari iOS', android: 'Firefox Android' };
+
+  function detectPlatform() {
+    const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+    if (/iPhone|iPad|iPod/i.test(ua)) return 'ios';
+    if (/Android/i.test(ua)) return 'android';
+    if (/Macintosh/.test(ua) && typeof document !== 'undefined' && 'ontouchend' in document) return 'ios';
+    return 'android';
+  }
+
+  function activePlatform() {
+    return settings && settings.platform && settings.platform !== 'auto' ? settings.platform : detectPlatform();
+  }
 
   const GEMINI_ROOT = 'https://generativelanguage.googleapis.com/v1beta/';
   const OPENROUTER_ROOT = 'https://openrouter.ai/api/v1/';
@@ -515,8 +579,8 @@
     const chosen = s.models[provider];
     let hints;
     if (provider === 'gemini') {
-      const listed = s.keys.gemini ? await geminiList(s.keys.gemini) : [];
-      hints = listed.concat(GEMINI_HINTS);
+      const first = (s.keys.gemini || [])[0] || '';
+      hints = first ? (await geminiList(first)).concat(GEMINI_HINTS) : GEMINI_HINTS.slice();
     } else if (provider === 'openrouter') {
       hints = OPENROUTER_HINTS;
     } else {
@@ -554,28 +618,93 @@
     return geminiOnce(key, model, system, userText, img, schema);
   }
 
+  const KEY_COOLDOWN_MS = 10 * 60 * 1000;
+  const DEAD_KEY_COOLDOWN_MS = 60 * 60 * 1000;
+
+  /* klucze w kolejności priorytetu; te w karencji idą na koniec */
+  function orderedKeys(list, cooldowns, provider) {
+    const now = Date.now();
+    const ready = [];
+    const cooling = [];
+    list.forEach((key, index) => {
+      const until = Number((cooldowns || {})[provider + ':' + keyId(key)]) || 0;
+      if (until > now) cooling.push({ index: index, until: until });
+      else ready.push(index);
+    });
+    cooling.sort((a, b) => a.until - b.until);
+    return ready.concat(cooling.map((item) => item.index));
+  }
+
+  async function coolKey(provider, key, kind) {
+    const cooldowns = Object.assign({}, (settings && settings.cooldowns) || {});
+    cooldowns[provider + ':' + keyId(key)] = Date.now()
+      + (kind === 'quota' ? KEY_COOLDOWN_MS : DEAD_KEY_COOLDOWN_MS);
+    await saveSettings({ cooldowns: cooldowns });
+  }
+
+  /* działający klucz wraca na początek listy, więc priorytet idzie za tym,
+     co naprawdę działa */
+  async function promoteKey(provider, key) {
+    const s = await getSettings();
+    const list = (s.keys[provider] || []).slice();
+    const at = list.indexOf(key);
+    if (at === -1) return;
+    const id = provider + ':' + keyId(key);
+    const cooldowns = Object.assign({}, s.cooldowns);
+    const hadCooldown = Boolean(cooldowns[id]);
+    if (hadCooldown) delete cooldowns[id];
+    if (at === 0 && !hadCooldown) return;
+    if (at > 0) {
+      list.splice(at, 1);
+      list.unshift(key);
+    }
+    const keys = {};
+    keys[provider] = list;
+    await saveSettings({ keys: keys, cooldowns: cooldowns });
+  }
+
   async function askModel(system, userText, img, schema) {
     const s = await getSettings();
     const primary = s.provider;
     const keys = s.keys || {};
-    if (!keys[primary]) throw new Error('Brak klucza ' + PROVIDER_LABEL[primary] + ' — dodaj go w ustawieniach');
+    if (!(keys[primary] || []).length) throw new Error('Brak klucza ' + PROVIDER_LABEL[primary] + ' — dodaj go w ustawieniach');
 
     const deadline = Date.now() + 45000;
     const reasons = [];
+    const providers = [primary].concat(PROVIDERS.filter((p) => p !== primary && (keys[p] || []).length));
 
-    for (const provider of [primary].concat(PROVIDERS.filter((p) => p !== primary && keys[p]))) {
-      for (const model of await modelsFor(provider, img)) {
-        if (Date.now() > deadline) break;
-        try {
-          const text = await callProvider(provider, keys[provider], model, system, userText, img, schema);
-          if (text) {
-            remembered[provider] = model;
-            return text;
+    for (const provider of providers) {
+      const list = keys[provider] || [];
+      if (!list.length) continue;
+      const models = await modelsFor(provider, img);
+      let providerDone = false;
+
+      for (const index of orderedKeys(list, s.cooldowns, provider)) {
+        if (providerDone || Date.now() > deadline) break;
+        const key = list[index];
+        for (const model of models) {
+          if (Date.now() > deadline) break;
+          try {
+            const text = await callProvider(provider, key, model, system, userText, img, schema);
+            if (text) {
+              remembered[provider] = model;
+              await promoteKey(provider, key).catch(() => {});
+              return text;
+            }
+          } catch (err) {
+            reasons.push(PROVIDER_LABEL[provider] + ': ' + msgOf(err));
+            const kind = err && err.kind;
+            /* klucz wyczerpany albo w limicie: następny klucz tego providera */
+            if (kind === 'key' || kind === 'quota') {
+              await coolKey(provider, key, kind).catch(() => {});
+              break;
+            }
+            /* model albo obraz: ten sam klucz, kolejny model; reszta: inny provider */
+            if (kind !== 'model' && kind !== 'image' && kind !== 'empty') {
+              providerDone = true;
+              break;
+            }
           }
-        } catch (err) {
-          reasons.push(PROVIDER_LABEL[provider] + ': ' + msgOf(err));
-          const kind = err && err.kind;
-          if (kind !== 'model' && kind !== 'image' && kind !== 'empty') break;
         }
       }
     }
@@ -905,34 +1034,88 @@
     });
   }
 
-  /* Prawdziwy zrzut ekranu. Safari na iOS 27+ ma getDisplayMedia, ale przy
-     każdym wywołaniu pokazuje systemowe okno wyboru ekranu. Gdy API nie ma,
-     strona nie jest HTTPS albo użytkownik odmówi, zwracamy null i tryb cichy
-     korzysta z tekstu strony. */
+  /* Zrzut ekranu. Safari na iOS zawsze pokazuje systemowe okno wyboru ekranu,
+     a jego potwierdzenie potrafi trafić do pierwszych klatek strumienia.
+     Dlatego czekamy na stabilny obraz (dwie identyczne próbki), odrzucamy
+     klatki puste i przycinamy paski systemowe u góry i dołu. Gdy API nie ma,
+     strona nie jest HTTPS, użytkownik odmówi albo obraz jest bezużyteczny,
+     zwracamy null i tryb cichy korzysta z tekstu strony. */
+  const FRAME_SAMPLE_MS = 200;
+  const FRAME_MIN_MS = 700;
+  const FRAME_MAX_MS = 6000;
+  const FRAME_MIN_VARIANCE = 12;
+
+  function frameStats(video, context) {
+    try { context.drawImage(video, 0, 0, 64, 64); } catch (err) { return null; }
+    let data;
+    try { data = context.getImageData(0, 0, 64, 64).data; } catch (err) { return null; }
+    let sum = 0;
+    let sumSq = 0;
+    let hash = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const lum = (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000;
+      sum += lum;
+      sumSq += lum * lum;
+      if (i % 64 === 0) hash = (hash * 33 + lum) | 0;
+    }
+    const count = data.length / 4;
+    const mean = sum / count;
+    return { hash: hash, variance: sumSq / count - mean * mean };
+  }
+
   async function grabFrame() {
     const media = typeof navigator !== 'undefined' ? navigator.mediaDevices : null;
     if (!media || typeof media.getDisplayMedia !== 'function') return null;
     let stream = null;
+    let video = null;
     try {
       stream = await media.getDisplayMedia({ video: true, audio: false });
-      const video = document.createElement('video');
+      video = document.createElement('video');
       video.muted = true;
       video.playsInline = true;
+      video.setAttribute('playsinline', '');
+      video.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+      document.documentElement.appendChild(video);
       video.srcObject = stream;
       await video.play();
-      await new Promise((done) => setTimeout(done, 200));
+
+      const probe = document.createElement('canvas');
+      probe.width = 64;
+      probe.height = 64;
+      const context = probe.getContext('2d', { willReadFrequently: true });
+
+      /* pierwsze klatki mogą zawierać okno potwierdzenia, więc bierzemy
+         dopiero obraz, który przestał się zmieniać */
+      const startedAt = Date.now();
+      let prev = null;
+      let stable = false;
+      while (Date.now() - startedAt < FRAME_MAX_MS) {
+        await new Promise((done) => setTimeout(done, FRAME_SAMPLE_MS));
+        const stats = context ? frameStats(video, context) : null;
+        if (!stats) continue;
+        const quiet = prev && prev.hash === stats.hash && stats.variance >= FRAME_MIN_VARIANCE;
+        if (quiet && Date.now() - startedAt >= FRAME_MIN_MS) { stable = true; break; }
+        prev = stats;
+      }
+      if (!stable && (!prev || prev.variance < FRAME_MIN_VARIANCE)) return null;
+
       const width = video.videoWidth;
       const height = video.videoHeight;
       if (!width || !height) return null;
+
+      const padTop = Math.round(height * 0.06);
+      const padBottom = Math.round(height * 0.04);
+      const srcH = Math.max(1, height - padTop - padBottom);
       const scale = Math.min(1, 1600 / width);
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(width * scale));
-      canvas.height = Math.max(1, Math.round(height * scale));
-      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.height = Math.max(1, Math.round(srcH * scale));
+      canvas.getContext('2d').drawImage(video, 0, padTop, width, srcH, 0, 0, canvas.width, canvas.height);
       return { mime: 'image/jpeg', b64: canvas.toDataURL('image/jpeg', 0.82).split(',')[1] };
     } catch (err) {
       return null;
     } finally {
+      if (video && video.parentNode) video.parentNode.removeChild(video);
       if (stream) {
         try { stream.getTracks().forEach((track) => track.stop()); } catch (err) { /* już zatrzymany */ }
       }
@@ -942,7 +1125,7 @@
   /* ---------- panel ---------- */
 
   const HOST_ID = 'tt-ios-host';
-  const VERSION = '2.2.0'; // trzymaj zgodne z @version wyżej
+  const VERSION = '2.3.0'; // trzymaj zgodne z @version wyżej
 
   const CSS = [
     ':host{all:initial}',
@@ -1008,7 +1191,7 @@
     '.settings{border-top:1px solid rgba(20,24,40,.08);padding-top:10px;margin-top:4px}',
     '.settings[hidden]{display:none}',
     '.settings label{display:block;margin-bottom:8px;font-size:12px;color:#8a8f9a}',
-    '.settings input,.settings select{display:block;width:100%;margin-top:4px;min-height:36px;',
+    '.settings input,.settings select,.settings textarea{display:block;width:100%;margin-top:4px;min-height:36px;',
     'border:1px solid rgba(20,24,40,.12);border-radius:9px;background:rgba(255,255,255,.72);color:#1c1c1e;',
     'font:13px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:7px 8px}',
     '.settings .row{margin-top:10px;align-items:center}',
@@ -1055,12 +1238,16 @@
     ':host(.dark) .err{color:#ff8a7a}',
     ':host(.dark) .settings{border-top-color:rgba(255,255,255,.1)}',
     ':host(.dark) .settings label{color:#9aa2b1}',
-    ':host(.dark) .settings input,:host(.dark) .settings select{background:rgba(255,255,255,.07);',
+    ':host(.dark) .settings input,:host(.dark) .settings select,:host(.dark) .settings textarea{background:rgba(255,255,255,.07);',
     'border-color:rgba(255,255,255,.14);color:#e7eaf2}',
     ':host(.dark) .hint{color:#8d95a3}',
     ':host(.dark) .toast{background:rgba(238,241,248,.96);color:#1b1d23;box-shadow:0 6px 20px rgba(0,0,0,.5)}',
     ':host(.dark) .toastbtn{background:rgba(20,24,40,.14)}',
-    ':host(.dark) .toastbtn:active{background:rgba(20,24,40,.24)}'
+    ':host(.dark) .toastbtn:active{background:rgba(20,24,40,.24)}',
+    '.settings textarea{resize:vertical;min-height:76px;line-height:1.35;font-size:12px}',
+    ':host(.p-android) .fab{width:44px;height:44px;border-radius:22px}',
+    ':host(.p-android) .toastbtn{min-height:32px}',
+    ':host(.p-ios) .fab{-webkit-tap-highlight-color:transparent}'
   ].join('');
 
   function el(tag, cls, text) {
@@ -1134,6 +1321,15 @@
     const panelSettings = el('div', 'settings');
     panelSettings.hidden = true;
 
+    const platformLabel = el('label', null, 'Tryb działania');
+    const platform = el('select', 'platform');
+    PLATFORMS.forEach((id) => {
+      const option = el('option', null, PLATFORM_LABEL[id]);
+      option.value = id;
+      platform.appendChild(option);
+    });
+    platformLabel.appendChild(platform);
+
     const providerLabel = el('label', null, 'Provider');
     const provider = el('select', 'provider');
     PROVIDERS.forEach((id) => {
@@ -1143,12 +1339,12 @@
     });
     providerLabel.appendChild(provider);
 
-    const keyLabel = el('label', null, 'Klucz API');
-    const key = el('input', 'key');
-    key.type = 'password';
+    const keyLabel = el('label', null, 'Klucze API (jeden na wiersz, pierwszy ma priorytet)');
+    const key = el('textarea', 'key');
+    key.rows = 3;
     key.autocomplete = 'off';
     key.spellcheck = false;
-    key.placeholder = 'wklej klucz';
+    key.placeholder = 'klucz 1\nklucz 2';
     keyLabel.appendChild(key);
 
     const modelLabel = el('label', null, 'Model (auto albo nazwa)');
@@ -1166,6 +1362,7 @@
     saveRow.appendChild(save);
     saveRow.appendChild(hint);
 
+    panelSettings.appendChild(platformLabel);
     panelSettings.appendChild(providerLabel);
     panelSettings.appendChild(keyLabel);
     panelSettings.appendChild(modelLabel);
@@ -1191,7 +1388,7 @@
     ui = {
       host: host, fab: fab, panel: panel, toast: toast, status: status, answer: answer,
       buttons: buttons, settings: panelSettings, chip: selChip, chipText: selText,
-      provider: provider, key: key, model: model, hint: hint, file: file, theme: themeBtn
+      provider: provider, platform: platform, key: key, model: model, hint: hint, file: file, theme: themeBtn
     };
 
     fab.addEventListener('click', onFabTap);
@@ -1210,16 +1407,27 @@
       updateArmed();
     });
 
-    provider.addEventListener('change', fillKeyFields);
+    provider.addEventListener('change', () => { fillKeyFields(); });
+
+    platform.addEventListener('change', async () => {
+      await saveSettings({ platform: platform.value }).catch(() => {});
+      applyPlatform();
+      hint.textContent = PLATFORM_LABEL[platform.value];
+      setTimeout(() => { hint.textContent = ''; }, 2000);
+    });
 
     save.addEventListener('click', async () => {
       const chosen = PROVIDERS.indexOf(provider.value) !== -1 ? provider.value : 'gemini';
-      const patch = { provider: chosen, keys: {}, models: {} };
-      patch.keys[chosen] = key.value.trim();
+      const list = keyList(key.value);
+      const patch = { provider: chosen, platform: platform.value, keys: {}, models: {} };
+      patch.keys[chosen] = list;
       patch.models[chosen] = model.value.trim() || 'auto';
+      /* nowa lista kluczy to świeża próba, stare blokady nie mają sensu */
+      patch.resetCooldowns = chosen;
       await saveSettings(patch);
-      hint.textContent = key.value.trim() ? 'Zapisano' : 'Zapisano bez klucza';
-      setTimeout(() => { hint.textContent = ''; }, 2000);
+      applyPlatform();
+      hint.textContent = list.length ? 'Zapisano kluczy: ' + list.length : 'Zapisano bez klucza';
+      setTimeout(() => { hint.textContent = ''; }, 2200);
     });
 
     buttons.selection.addEventListener('click', () => {
@@ -1264,7 +1472,9 @@
   async function fillKeyFields(loaded) {
     if (!ui) return;
     const s = loaded || await getSettings();
-    ui.key.value = s.keys[ui.provider.value] || '';
+    const list = s.keys[ui.provider.value] || [];
+    if (document.activeElement !== ui.key) ui.key.value = list.join('\n');
+    if (ui.platform) ui.platform.value = s.platform || 'auto';
     const chosen = s.models[ui.provider.value];
     ui.model.value = chosen && chosen !== 'auto' ? chosen : '';
   }
@@ -1289,6 +1499,14 @@
     const next = uiState.theme === 'dark' ? 'light' : 'dark';
     applyTheme(next);
     saveUiState({ theme: next }).catch(() => {});
+  }
+
+  /* kółko i dymki dostają drobne różnice zależne od platformy */
+  function applyPlatform() {
+    if (!ui) return;
+    const mode = activePlatform();
+    ui.host.classList.toggle('p-ios', mode === 'ios');
+    ui.host.classList.toggle('p-android', mode === 'android');
   }
 
   function openPanel() {
@@ -1486,27 +1704,33 @@
     ui.toast.style.bottom = 'auto';
   }
 
+  function copyLegacy(value) {
+    try {
+      const area = document.createElement('textarea');
+      area.value = value;
+      area.setAttribute('readonly', '');
+      area.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+      document.body.appendChild(area);
+      area.select();
+      area.setSelectionRange(0, value.length);
+      const done = document.execCommand && document.execCommand('copy');
+      document.body.removeChild(area);
+      return Boolean(done);
+    } catch (err) { return false; }
+  }
+
   function copyText(text) {
     const value = String(text || '');
     if (!value) return Promise.resolve(false);
-    const api = typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText
+    const modern = () => (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText)
       ? navigator.clipboard.writeText(value).then(() => true, () => false)
       : Promise.resolve(false);
-    return api.then((copied) => {
-      if (copied) return true;
-      try {
-        const area = document.createElement('textarea');
-        area.value = value;
-        area.setAttribute('readonly', '');
-        area.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
-        document.body.appendChild(area);
-        area.select();
-        area.setSelectionRange(0, value.length);
-        const done = document.execCommand && document.execCommand('copy');
-        document.body.removeChild(area);
-        return Boolean(done);
-      } catch (err) { return false; }
-    });
+    /* iOS: execCommand działa w geście użytkownika, writeText bywa odrzucane */
+    if (activePlatform() === 'ios') {
+      if (copyLegacy(value)) return Promise.resolve(true);
+      return modern();
+    }
+    return modern().then((copied) => (copied ? true : copyLegacy(value)));
   }
 
   function showToast(text, ms, opt) {
@@ -1623,10 +1847,12 @@
     if (!ui || busy || capturing) return;
     capturing = true;
     try {
-      const shot = grabFrame();
-      const task = firstVisibleTask();
-      const picked = task || currentSelection().text;
-      const img = await shot;
+      const picked = firstVisibleTask() || currentSelection().text;
+      /* Zrzut ekranu zawsze otwiera systemowe okno udostępniania, więc
+         pytamy o niego tylko wtedy, gdy sam tekst nie wystarcza: brak
+         zadania albo krótki tekst bez znaku zapytania (np. samo zdjęcie). */
+      const needShot = !picked || (picked.length < 80 && !/\?/.test(picked));
+      const img = needShot ? await grabFrame() : null;
       if (!img && !picked) {
         showToast('Nie widzę zadania na ekranie', 2200);
         return;
@@ -1736,7 +1962,8 @@
     drag.shown = true;
     ui.fab.classList.add('dragging');
     hideToast();
-    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+    /* iOS nie ma wibracji w przeglądarce, Firefox Android ma */
+    if (activePlatform() === 'android' && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
       try { navigator.vibrate(8); } catch (err) { /* brak wibracji */ }
     }
   }
@@ -1804,6 +2031,8 @@
     updateArmed();
     await loadUiState().catch(() => {});
     applyTheme(uiState.theme);
+    await getSettings().catch(() => {});
+    applyPlatform();
     applyFabPos();
     getSettings().then(() => { if (ui) fillKeyFields(); }).catch(() => {});
   }

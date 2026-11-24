@@ -32,7 +32,8 @@ zostanie wysłany.
    Otwórz go jako zwykłą stronę (nie przez aplikację GitHub). Userscripts
    wykryje plik `.user.js` i pokaże przycisk **Install** / **Zainstaluj**.
 4. Wejdź na dowolną stronę, odśwież ją i stuknij niebieski przycisk **TT**.
-5. Stuknij **Ustawienia**, wybierz providera i wklej klucz, np.
+5. Stuknij **Ustawienia**, wybierz tryb działania (Safari iOS albo Firefox
+   Android), potem providera i wklej klucze, po jednym w wierszu, np.
    - Gemini: https://aistudio.google.com/apikey
    - OpenRouter: https://openrouter.ai/keys
    - Groq: https://console.groq.com/keys
@@ -41,7 +42,7 @@ zostanie wysłany.
 
 Aktualizacja: po zmianie pliku na GitHubie otwórz ten sam link raw i
 zainstaluj nowszą wersję (Userscripts podmieni skrypt). Numer wersji widać
-w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.2.0`).
+w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.3.0`).
 
 ## Jak używać
 
@@ -56,13 +57,15 @@ w nagłówku panelu, obok napisu **Tab Tools** (np. `v2.2.0`).
   leci do modelu, a odpowiedź pojawia się w małym ciemnym dymku nad
   przyciskiem. Jedno stuknięcie nadal otwiera i zamyka panel, tylko z krótkim
   opóźnieniem, żeby odróżnić je od dwukrotnego.
-- **Przytrzymanie TT przez 2 sekundy bez ruchu** — tryb cichy. Skrypt próbuje
-  zrobić zrzut ekranu i wysłać go do modelu bez panelu i bez dymka
-  „Analizuję…”, a gdy zrzut jest niedostępny, czyta pierwsze widoczne,
-  nierozwiązane zadanie ze strony. Krótka odpowiedź (litera, 1-2 słowa,
-  krótka lista) pojawia się w dymku mniejszą czcionką. Dłuższa odpowiedź
-  otwarta trafia do schowka, a dymek mówi **Gotowe**. Jeśli iOS nie pozwoli
-  zapisać do schowka, dymek ma przycisk **Skopiuj**.
+- **Przytrzymanie TT przez 2 sekundy bez ruchu** — tryb cichy: bez panelu i
+  bez dymka „Analizuję…”. Skrypt czyta pierwsze widoczne, nierozwiązane
+  zadanie ze strony i wysyła sam tekst, więc nie wyskakuje żadne okno
+  udostępniania ekranu. Zrzut ekranu robi tylko wtedy, gdy tekstu brakuje
+  albo jest za krótki (np. pytanie jest obrazkiem). Krótka odpowiedź
+  (litera, 1-2 słowa, krótka lista) pojawia się w dymku mniejszą czcionką.
+  Dłuższa odpowiedź otwarta trafia do schowka, a dymek mówi **Gotowe**.
+  Jeśli system nie pozwoli zapisać do schowka, dymek ma przycisk
+  **Skopiuj**.
 - **Tekst strony** — wysyła tekst widoczny na stronie (do 12000 znaków).
 - **Zdjęcie** — wybierz zdjęcie z biblioteki albo zrób nowe; do promptu
   doklejany jest też tekst strony, żeby model lepiej odczytał treść.
@@ -97,9 +100,17 @@ schowku.
 ## Różnice względem wersji Chrome
 
 - Safari na iOS od wersji 27 ma `getDisplayMedia`, ale przy każdym zrzucie
-  pokazuje systemowe okno wyboru ekranu. Sam skrypt nie pokazuje przy tym
-  niczego, jednak systemowe okno jest nie do pominięcia. Na starszym iOS albo
-  bez HTTPS tryb cichy czyta widoczny tekst strony zamiast obrazu ekranu.
+  pokazuje systemowe okno wyboru ekranu, a jego potwierdzenie potrafi wejść
+  do pierwszych klatek. Dlatego tryb cichy najpierw korzysta z tekstu strony,
+  a zrzut robi tylko wtedy, gdy tekst nie wystarcza. Zrzut czeka wtedy na
+  stabilny obraz (dwie identyczne próbki), odrzuca klatki puste i przycina
+  paski systemowe u góry i dołu, więc do modelu nie trafia okno potwierdzenia.
+  Bez HTTPS albo przy odmowie dostępu zostaje tekst strony.
+- **Tryb działania** w ustawieniach wybiera zachowanie pod Safari iOS albo
+  Firefox Android (Tampermonkey). Różnice są niewielkie: iOS kopiuje przez
+  `execCommand` w geście stuknięcia (jego `navigator.clipboard` bywa
+  odrzucany), Android kopiuje przez Clipboard API i wibruje przy
+  przeciąganiu. Przycisk na Androidzie jest trochę większy.
 - Nie ma skrótów klawiszowych. Pierwsze widoczne zadanie skrypt wyłapuje
   tylko po 2 s przytrzymania **TT**.
 - Dotknięcie czegokolwiek poza stroną odznacza tekst w Safari, dlatego
@@ -120,8 +131,9 @@ schowku.
   ustawienia rozszerzenia dla danej witryny i odśwież stronę.
 - **Brak klucza ...**: klucz nie został zapisany dla wybranego providera.
   Otwórz Ustawienia i zapisz ponownie.
-- **Limit zapytań (429)**: darmowe plany mają limit na minutę. Odczekaj
-  chwilę albo przełącz providera.
+- **Limit zapytań (429)**: darmowe plany mają limit na minutę. Skrypt sam
+  przeskakuje na następny klucz z listy, a przy braku kolejnego na innego
+  providera. Klucz w limicie odpoczywa 10 minut, odrzucony 60 minut.
 - **Model nie zwrócił treści**: model nie odczytał pytania. Spróbuj ze
   zdjęciem wyraźniejszym, krótszym zaznaczeniem albo innym providerem.
 - **Pierwsze stuknięcie tylko odznacza tekst**: tak działa iOS przy aktywnym
@@ -129,8 +141,17 @@ schowku.
 - **Przycisk TT nie przeszkadza**: jest przygaszony, dopóki nie jest potrzebny.
   Gdy panel jest otwarty, zamyka go stuknięcie w dowolne miejsce strony.
 
+## Kilka kluczy API
+
+W ustawieniach jednego providera można trzymać do 8 kluczy, po jednym w
+wierszu. Pierwszy wiersz ma priorytet. Gdy klucz zwróci limit (429), brak
+środków (402) albo zostanie odrzucony (401/403), skrypt bierze następny, a
+klucz z limitem wpada na 10 minut karencji (odrzucony na 60). Klucz, który
+zadziałał, wraca na początek listy, więc priorytet idzie za tym, co naprawdę
+działa, i zostaje zapisany. Zapis nowej listy kluczy czyści stare karencje.
+
 ## Uwaga o kluczach
 
-Klucz API jest widoczny dla skryptu działającego na stronie, więc nie
-wpisuj go na współdzielonym telefonie. Wersja Chrome trzyma klucze poza
+Klucze API są widoczne dla skryptu działającego na stronie, więc nie
+wpisuj ich na współdzielonym telefonie. Wersja Chrome trzyma klucze poza
 stroną (w rozszerzeniu), userscript nie ma takiego luksusu.
