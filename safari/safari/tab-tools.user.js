@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tab Tools (iOS)
 // @namespace    tab-tools-ios
-// @version      2.3.0
+// @version      2.3.1
 // @description  Rozwiązuje pytanie z zaznaczenia, tekstu strony albo ze zdjęcia. Gemini, OpenRouter albo Groq, kilka kluczy API z automatycznym przełączaniem.
 // @match        *://*/*
 // @grant        GM.xmlHttpRequest
@@ -1125,7 +1125,7 @@
   /* ---------- panel ---------- */
 
   const HOST_ID = 'tt-ios-host';
-  const VERSION = '2.3.0'; // trzymaj zgodne z @version wyżej
+  const VERSION = '2.3.1'; // trzymaj zgodne z @version wyżej
 
   const CSS = [
     ':host{all:initial}',
@@ -2037,9 +2037,45 @@
     getSettings().then(() => { if (ui) fillKeyFields(); }).catch(() => {});
   }
 
+  /* Niektóre strony podmieniają body (SPA), a wtedy przycisk wypada
+     z dokumentu. Dokładamy go z powrotem i odtwarzamy pozycję. */
+  function ensureMounted() {
+    if (!ui || !ui.host) return;
+    if (ui.host.isConnected) return;
+    (document.body || document.documentElement).appendChild(ui.host);
+    applyFabPos();
+  }
+
+  /* Gdy start się wywali, lepiej pokazać powód niż milczeć. */
+  function showBootError(err) {
+    try {
+      if (document.getElementById('tt-boot-error')) return;
+      const box = document.createElement('div');
+      box.id = 'tt-boot-error';
+      box.style.cssText = 'position:fixed;left:8px;right:8px;bottom:8px;z-index:2147483647;'
+        + 'padding:10px 12px;border-radius:10px;background:#c0392b;color:#fff;'
+        + 'font:12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+        + 'box-shadow:0 6px 20px rgba(0,0,0,.3)';
+      box.textContent = 'Tab Tools nie wystartował: ' + msgOf(err);
+      box.addEventListener('click', () => box.remove());
+      (document.body || document.documentElement).appendChild(box);
+    } catch (ignored) { /* brak DOM, nie ma gdzie pokazać */ }
+  }
+
+  function boot() {
+    try {
+      const started = start();
+      if (started && typeof started.catch === 'function') started.catch(showBootError);
+    } catch (err) {
+      showBootError(err);
+    }
+    setInterval(ensureMounted, 3000);
+    window.addEventListener('pageshow', ensureMounted, true);
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start, { once: true });
+    document.addEventListener('DOMContentLoaded', boot, { once: true });
   } else {
-    start();
+    boot();
   }
 })();

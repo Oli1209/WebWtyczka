@@ -127,8 +127,13 @@ schowku.
 
 ## Gdy coś nie działa
 
-- **Brak przycisku TT**: Userscripts nie ma dostępu do tej strony. Sprawdź
-  ustawienia rozszerzenia dla danej witryny i odśwież stronę.
+- **Brak przycisku TT, ale skrypt jest włączony**: skrypt nie został
+  wstrzyknięty na tę stronę. Odśwież stronę po instalacji, sprawdź, czy
+  witryna nie jest wykluczona w ustawieniach menedżera i czy rozszerzenie ma
+  dostęp do wszystkich stron. Najszybciej sprawdzić na zwykłej stronie, np.
+  `https://example.com`.
+- **Czerwony pasek „Tab Tools nie wystartował”**: tak wygląda błąd przy
+  starcie — treść paska mówi, co padło. Stuknij go, żeby zamknąć.
 - **Brak klucza ...**: klucz nie został zapisany dla wybranego providera.
   Otwórz Ustawienia i zapisz ponownie.
 - **Limit zapytań (429)**: darmowe plany mają limit na minutę. Skrypt sam
